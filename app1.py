@@ -138,14 +138,8 @@ def calculate_interaction_curve(b, h, cover, main_db, nx, ny, fc, fy):
         else:
             phi = 0.65 + (eps_t - 0.002) * (250 / 3)
 
-        # Cap Pn at Pn_max/0.65 (Theoretical limit before phi)
-        # But we plot phi*Pn directly
-        phiPn = min(phi * Pn, 0.65 * Pn_max / 0.65)  # Apply 0.80 factor logic roughly
-        # Better: apply phi to Pn, but cap at phi*Pn_max(0.80Po)
-        # Note: phi for compression controlled is 0.65
-
+        # Cap Pn at Pn_max
         phiPn_val = phi * Pn
-        # Cap at phi(0.65) * 0.80 * Po
         limit_top = 0.65 * 0.80 * Po
         if phiPn_val > limit_top: phiPn_val = limit_top
 
@@ -211,7 +205,6 @@ def process_column_calculation(inputs):
     sec("2. AXIAL LOAD CAPACITY")
 
     # Po
-    # Po = 0.85 fc (Ag - Ast) + fy Ast
     Po_N = 0.85 * fc * (Ag - Ast) + fy * Ast
     Po_tf = Po_N / 9806.65
 
@@ -220,7 +213,6 @@ def process_column_calculation(inputs):
         f"{fmt(Po_tf, 2)}", "tf")
 
     # Phi Pn Max
-    # phi = 0.65, factor = 0.80
     phi_c = 0.65
     phiPn_max_N = phi_c * 0.80 * Po_N
     phiPn_max_tf = phiPn_max_N / 9806.65
@@ -230,7 +222,7 @@ def process_column_calculation(inputs):
         f"{fmt(phiPn_max_tf, 2)}", "tf")
 
     # Check Axial
-    row("Load Input (Pu)", "-", "-", f"{fmt(Pu_tf, 3)}", "tf", "", )  # Red color handled by CSS
+    row("Load Input (Pu)", "-", "-", f"{fmt(Pu_tf, 3)}", "tf", "", )  # Red handled by CSS
 
     status_axial = "PASS" if Pu_tf <= phiPn_max_tf else "FAIL"
     row("Axial Check", "Pu ≤ φPn,max", f"{fmt(Pu_tf, 2)} ≤ {fmt(phiPn_max_tf, 2)}", status_axial, "-", status_axial)
@@ -263,12 +255,10 @@ def process_column_calculation(inputs):
     Pu_N = Pu_tf * 9806.65
     m_cap_Nmm = 0
 
-    # Simple search
     found = False
     for i in range(len(curve_points) - 1):
         p1 = curve_points[i]['P']
         p2 = curve_points[i + 1]['P']
-        # Check if Pu is within range [p2, p1] (Descending P)
         if p2 <= Pu_N <= p1:
             ratio = (Pu_N - p2) / (p1 - p2 + 1e-9)
             m1 = curve_points[i]['M']
@@ -279,9 +269,9 @@ def process_column_calculation(inputs):
 
     if not found:
         if Pu_N > curve_points[0]['P']:
-            m_cap_Nmm = 0  # Above max
+            m_cap_Nmm = 0
         else:
-            m_cap_Nmm = curve_points[-1]['M']  # Very low load
+            m_cap_Nmm = curve_points[-1]['M']
 
     m_cap_tfm = m_cap_Nmm / 9806650.0
 
@@ -458,7 +448,7 @@ def generate_column_report(inputs, rows, img_sect, img_pm):
             <img src="{img_pm}" />
         </div>
 
-        <br><br><br><br>
+        <br><br><br><br><br>
 
         <h3>Calculation Details</h3>
         <table>
