@@ -73,100 +73,86 @@ def fmt(n, digits=3):
         return "-"
 
 
+def beta1FromFc(fc_MPa):
+    if fc_MPa <= 28: return 0.85
+    b1 = 0.85 - 0.05 * ((fc_MPa - 28) / 7)
+    return max(0.65, b1)
+
+
 # ==========================================
 # 3. CALCULATION LOGIC (ACI 318-19 COLUMN)
 # ==========================================
 def calculate_interaction_curve(b, h, cover, main_db, nx, ny, fc, fy):
-    """
-    สร้างจุดบนกราฟ P-M Interaction Diagram
-    b, h, cover, main_db (mm), fc, fy (MPa)
-    nx = bars along x-axis (total per face), ny = bars along y-axis
-    """
-    # 1. Prepare Steel Layers
-    # Assume symmetric arrangement for simplicity in this module
-    # d_prime = cover + tie_dia + main_db/2 approx cover + 10 + main_db/2
-    d_prime = cover + 10 + main_db / 2
+    """สร้างจุดบนกราฟ P-M Interaction Diagram"""
+    d_prime = cover + 10 + main_db / 2  # approx d'
     d = h - d_prime
 
     Ast = (2 * nx + 2 * (ny - 2)) * (math.pi * (main_db / 2) ** 2)
-    # Approximate into 2 layers for simplified P-M curve generation (Top & Bot)
-    # (In real PRO software, we consider exact coordinates of every bar)
-    # Here we simplify to As_tension and As_compression for standard Rectangular
-    As_face = Ast / 2.0
+    As_face = Ast / 2.0  # Simplify to 2 layers for curve generation
 
-    # 2. Key Points
-    points = []  # (M, P)
+    points = []
 
-    # Point 1: Pure Compression (Po)
-    # Po = 0.85 fc (Ag - Ast) + fy Ast
+    # Pure Compression Point (Po)
     Ag = b * h
     Po = 0.85 * fc * (Ag - Ast) + fy * Ast
-    # Pn_max = 0.80 * Po (for Tied Column)
-    Pn_max = 0.80 * Po
-    points.append({'P': Pn_max, 'M': 0, 'label': 'Max Axial'})
+    Pn_max = 0.80 * Po  # Tied Column
 
     # Generate points by varying Neutral Axis (c)
-    # c goes from roughly 1.5h down to roughly 0.1h
-    c_values = np.linspace(1.5 * h, 0.1 * h, 30)
+    c_values = np.linspace(1.5 * h, 0.1 * h, 40)
 
     for c in c_values:
-        # Strain
         eps_cu = 0.003
-        a = 0.85 * c  # simplified beta1
-        if fc > 28:
-            beta1 = max(0.65, 0.85 - 0.05 * (fc - 28) / 7)
-            a = beta1 * c
-        else:
-            beta1 = 0.85
+        beta1 = beta1FromFc(fc)
+        a = beta1 * c
 
         # Concrete Force
         Cc = 0.85 * fc * b * min(a, h)
 
-        # Steel Forces (Simplified 2 layers: Tension side & Compression side)
-        # Layer 1 (Compression side): d'
+        # Steel Forces
+        # Layer 1 (Compression side)
         eps_s1 = eps_cu * (c - d_prime) / c
         fs1 = min(fy, 200000 * eps_s1)
-        fs1 = max(-fy, fs1)  # Check yield
-        Fs1 = As_face * fs1  # Force
+        fs1 = max(-fy, fs1)
+        Fs1 = As_face * fs1
 
-        # Layer 2 (Tension side): d
+        # Layer 2 (Tension side)
         eps_s2 = eps_cu * (c - d) / c
         fs2 = min(fy, 200000 * eps_s2)
         fs2 = max(-fy, fs2)
-        Fs2 = As_face * fs2  # Force (Negative if tension)
+        Fs2 = As_face * fs2
 
-        # Equilibrium
-        Pn = Cc + Fs1 + Fs2  # Forces sum
+        Pn = Cc + Fs1 + Fs2
 
         # Moment about Plastic Centroid (h/2)
-        # Cc acts at a/2 from top. Arm = h/2 - a/2
         Mc = Cc * (h / 2 - a / 2)
-        # Fs1 acts at d'. Arm = h/2 - d'
         Ms1 = Fs1 * (h / 2 - d_prime)
-        # Fs2 acts at d. Arm = d - h/2
-        Ms2 = -Fs2 * (d - h / 2)  # Note sign convention
-
+        Ms2 = -Fs2 * (d - h / 2)
         Mn = Mc + Ms1 + Ms2
 
-        # Phi Factor Check (ACI 318-19)
-        # Based on net tensile strain (eps_t) in extreme tension steel
+        # Phi Factor
         eps_t = abs(eps_cu * (d - c) / c)
-
         if eps_t <= 0.002:
-            phi = 0.65  # Compression controlled (Tied)
+            phi = 0.65
         elif eps_t >= 0.005:
-            phi = 0.90  # Tension controlled
+            phi = 0.90
         else:
-            # Transition
             phi = 0.65 + (eps_t - 0.002) * (250 / 3)
 
-        # Cap Pn at Pn_max
-        Pn_final = min(Pn, Pn_max / 0.65)  # theoretical cap before phi
+        # Cap Pn at Pn_max/0.65 (Theoretical limit before phi)
+        # But we plot phi*Pn directly
+        phiPn = min(phi * Pn, 0.65 * Pn_max / 0.65)  # Apply 0.80 factor logic roughly
+        # Better: apply phi to Pn, but cap at phi*Pn_max(0.80Po)
+        # Note: phi for compression controlled is 0.65
 
-        points.append({'P': phi * Pn_final, 'M': phi * Mn, 'phi': phi})
+        phiPn_val = phi * Pn
+        # Cap at phi(0.65) * 0.80 * Po
+        limit_top = 0.65 * 0.80 * Po
+        if phiPn_val > limit_top: phiPn_val = limit_top
 
-    # Point: Pure Bending (approx)
-    points.append({'P': 0, 'M': points[-1]['M'], 'label': 'Pure Flexure'})
+        points.append({'P': phiPn_val, 'M': phi * Mn, 'phi': phi})
+
+    # Pure Bending Point (approx)
+    points.append({'P': 0, 'M': points[-1]['M']})
 
     return points, Ag, Ast
 
@@ -190,8 +176,6 @@ def process_column_calculation(inputs):
 
     main_key = inputs['mainBar']
     tie_key = inputs['tieBar']
-    db_main = BAR_INFO[main_key]['d_mm']
-    db_tie = BAR_INFO[tie_key]['d_mm']
     nx = int(inputs['nx'])
     ny = int(inputs['ny'])
 
@@ -200,19 +184,22 @@ def process_column_calculation(inputs):
 
     # --- 1. MATERIAL & GEOMETRY ---
     sec("1. MATERIAL & SECTION PROPERTIES")
-    row("Materials", "fc', fy", f"{fmt(fc, 2)}, {fmt(fy, 0)}", "-", "MPa")
-    row("Section", "b x h", f"{fmt(b, 0)} x {fmt(h, 0)}", "-", "mm")
+    row("Concrete & Steel", "fc', fy", f"{fmt(fc, 2)}, {fmt(fy, 0)}", "-", "MPa")
+    row("Section Size", "b x h", f"{fmt(b, 0)} x {fmt(h, 0)}", "-", "mm")
+
+    beta1 = beta1FromFc(fc)
+    row("β1 Factor", "0.85 - 0.05(fc'-28)/7", f"fc'={fmt(fc, 2)}", f"{fmt(beta1, 2)}", "-")
 
     Ag = b * h
     row("Gross Area (Ag)", "b · h", f"{fmt(b, 0)}·{fmt(h, 0)}", f"{fmt(Ag, 0)}", "mm²")
 
     # Rebar Calculation
-    # Total bars = 2*nx + 2*(ny-2)
     total_bars = 2 * nx + 2 * max(0, ny - 2)
-    Ast = total_bars * BAR_INFO[main_key]['A_cm2'] * 100
+    bar_area_one = BAR_INFO[main_key]['A_cm2'] * 100
+    Ast = total_bars * bar_area_one
 
-    row("Main Reinforcement", f"{total_bars}-{main_key}",
-        f"{total_bars} x {fmt(BAR_INFO[main_key]['A_cm2'] * 100, 0)}",
+    row("Main Reinforcement", f"Total {total_bars}-{main_key}",
+        f"{total_bars} x {fmt(bar_area_one, 0)}",
         f"{fmt(Ast, 0)}", "mm²")
 
     rho_g = Ast / Ag
@@ -220,71 +207,91 @@ def process_column_calculation(inputs):
     row("Reinforcement Ratio", "ρg = Ast / Ag", f"{fmt(Ast, 0)} / {fmt(Ag, 0)}", f"{fmt(rho_g * 100, 2)}", "%",
         status_rho)
 
-    # --- 2. TIE DESIGN ---
-    sec("2. TIE (STIRRUP) DESIGN")
-    # ACI 318 Spacing Limits for Ties
-    # 1. 16 * db_main
-    s1 = 16 * db_main
-    # 2. 48 * db_tie
-    s2 = 48 * db_tie
-    # 3. Least dimension
-    s3 = min(b, h)
+    # --- 2. AXIAL CAPACITY (Compression) ---
+    sec("2. AXIAL LOAD CAPACITY")
 
+    # Po
+    # Po = 0.85 fc (Ag - Ast) + fy Ast
+    Po_N = 0.85 * fc * (Ag - Ast) + fy * Ast
+    Po_tf = Po_N / 9806.65
+
+    row("Nominal Axial (Po)", "0.85fc'(Ag-Ast) + fy·Ast",
+        f"0.85·{fmt(fc, 1)}·({fmt(Ag, 0)}-{fmt(Ast, 0)}) + ...",
+        f"{fmt(Po_tf, 2)}", "tf")
+
+    # Phi Pn Max
+    # phi = 0.65, factor = 0.80
+    phi_c = 0.65
+    phiPn_max_N = phi_c * 0.80 * Po_N
+    phiPn_max_tf = phiPn_max_N / 9806.65
+
+    row("Max Design Axial", "φPn,max = 0.65·0.80·Po",
+        f"0.52 · {fmt(Po_tf, 2)}",
+        f"{fmt(phiPn_max_tf, 2)}", "tf")
+
+    # Check Axial
+    row("Load Input (Pu)", "-", "-", f"{fmt(Pu_tf, 3)}", "tf", "", )  # Red color handled by CSS
+
+    status_axial = "PASS" if Pu_tf <= phiPn_max_tf else "FAIL"
+    row("Axial Check", "Pu ≤ φPn,max", f"{fmt(Pu_tf, 2)} ≤ {fmt(phiPn_max_tf, 2)}", status_axial, "-", status_axial)
+
+    # --- 3. TIE DESIGN ---
+    sec("3. TIE (STIRRUP) DESIGN")
+    db_main = BAR_INFO[main_key]['d_mm']
+    db_tie = BAR_INFO[tie_key]['d_mm']
+
+    s1 = 16 * db_main
+    s2 = 48 * db_tie
+    s3 = min(b, h)
     s_req = min(s1, s2, s3)
 
-    row("Tie Spacing Limit 1", "16 · db(main)", f"16 · {db_main}", f"{s1:.0f}", "mm")
-    row("Tie Spacing Limit 2", "48 · db(tie)", f"48 · {db_tie}", f"{s2:.0f}", "mm")
-    row("Tie Spacing Limit 3", "min(b, h)", f"min({b},{h})", f"{s3:.0f}", "mm")
+    row("Spacing Limit 1", "16 · db(main)", f"16 · {db_main}", f"{s1:.0f}", "mm")
+    row("Spacing Limit 2", "48 · db(tie)", f"48 · {db_tie}", f"{s2:.0f}", "mm")
+    row("Spacing Limit 3", "Least Dimension", f"min({b},{h})", f"{s3:.0f}", "mm")
 
-    # Round down to nearest 25mm or 10mm
     s_prov = math.floor(s_req / 25.0) * 25.0
     if s_prov < 50: s_prov = 50
 
-    row("Provide Ties", f"min(Limits)", "-", f"{tie_key} @ {s_prov / 10:.0f} cm", "-", "OK")
+    row("Provide Ties", f"Use {tie_key}", f"min({s1:.0f},{s2:.0f},{s3:.0f})", f"@{s_prov / 10:.0f} cm", "-", "OK")
 
-    # --- 3. CAPACITY CHECK (P-M) ---
-    sec("3. CAPACITY CHECK (P-M INTERACTION)")
+    # --- 4. INTERACTION CHECK ---
+    sec("4. MOMENT CAPACITY CHECK")
 
-    # Calculate Curve Points
     curve_points, _, _ = calculate_interaction_curve(b, h, cover, db_main, nx, ny, fc, fy)
 
-    # Load inputs (Convert to N, N-mm for calculation)
+    # Find M capacity at Pu (Interpolation)
     Pu_N = Pu_tf * 9806.65
-    Mu_Nmm = Mu_tfm * 9806650.0
-
-    # Check Logic: Simplified by checking distance to origin vs curve or simply plotting
-    # But for text report, we usually check Pn_max and pure bending
-
-    phiPn_max_N = curve_points[0]['P']
-    phiPn_max_tf = phiPn_max_N / 9806.65
-
-    row("Load Input (Pu)", "-", "-", f"{fmt(Pu_tf, 3)}", "tf", "")
-    row("Load Input (Mu)", "-", "-", f"{fmt(Mu_tfm, 3)}", "tf-m", "")
-
-    status_axial = "PASS" if Pu_N <= phiPn_max_N else "FAIL"
-    row("Axial Check", "Pu ≤ φPn,max", f"{fmt(Pu_tf, 2)} ≤ {fmt(phiPn_max_tf, 2)}", status_axial, "tf", status_axial)
-
-    # Visual check status (approximate for text)
-    # Find M capacity at Pu
-    # Interpolate
     m_cap_Nmm = 0
+
+    # Simple search
+    found = False
     for i in range(len(curve_points) - 1):
         p1 = curve_points[i]['P']
         p2 = curve_points[i + 1]['P']
+        # Check if Pu is within range [p2, p1] (Descending P)
         if p2 <= Pu_N <= p1:
-            # Linear interp
             ratio = (Pu_N - p2) / (p1 - p2 + 1e-9)
             m1 = curve_points[i]['M']
             m2 = curve_points[i + 1]['M']
             m_cap_Nmm = m2 + ratio * (m1 - m2)
+            found = True
             break
 
+    if not found:
+        if Pu_N > curve_points[0]['P']:
+            m_cap_Nmm = 0  # Above max
+        else:
+            m_cap_Nmm = curve_points[-1]['M']  # Very low load
+
     m_cap_tfm = m_cap_Nmm / 9806650.0
+
+    row("Load Input (Mu)", "-", "-", f"{fmt(Mu_tfm, 3)}", "tf-m", "")
+    row("Moment Capacity", "φMn @ Pu", f"Interpolated from Curve", f"{fmt(m_cap_tfm, 2)}", "tf-m")
+
     status_pm = "PASS" if Mu_tfm <= m_cap_tfm else "FAIL"
+    row("Interaction Check", "Mu ≤ φMn", f"{fmt(Mu_tfm, 2)} ≤ {fmt(m_cap_tfm, 2)}", status_pm, "-", status_pm)
 
-    row("Interaction Check", "Mu ≤ φMn @ Pu", f"{fmt(Mu_tfm, 2)} ≤ {fmt(m_cap_tfm, 2)}", status_pm, "tf-m", status_pm)
-
-    sec("4. FINAL STATUS")
+    sec("5. FINAL STATUS")
     overall = "OK" if (status_rho == "OK" and status_axial == "PASS" and status_pm == "PASS") else "NOT OK"
     row("Overall", "-", "-", "DESIGN COMPLETE", "-", overall)
 
@@ -303,86 +310,55 @@ def fig_to_base64(fig):
 
 def plot_column_section(b, h, cover, main_db, tie_db, nx, ny, tie_s, title="Column Section"):
     fig, ax = plt.subplots(figsize=(4, 4))
-    # Concrete
     rect = patches.Rectangle((0, 0), b, h, linewidth=2, edgecolor='#333', facecolor='#eee')
     ax.add_patch(rect)
-    # Ties
     margin = cover + tie_db / 2
     rect_tie = patches.Rectangle((margin, margin), b - 2 * margin, h - 2 * margin, linewidth=2, edgecolor='#1976D2',
                                  facecolor='none', linestyle='-')
     ax.add_patch(rect_tie)
 
-    # Main Bars
-    bar_positions = []
-    # Top & Bot rows (along x)
-    start_x = margin + main_db / 2
+    start_x = margin + main_db / 2;
     end_x = b - margin - main_db / 2
-
-    if nx > 1:
-        xs = np.linspace(start_x, end_x, nx)
-    else:
-        xs = [b / 2]
-
-    start_y = margin + main_db / 2
+    xs = np.linspace(start_x, end_x, nx) if nx > 1 else [b / 2]
+    start_y = margin + main_db / 2;
     end_y = h - margin - main_db / 2
-
-    if ny > 1:
-        ys = np.linspace(start_y, end_y, ny)
-    else:
-        ys = [h / 2]
+    ys = np.linspace(start_y, end_y, ny) if ny > 1 else [h / 2]
 
     # Plot Bars
-    # Top Row
     for x in xs:
         ax.add_patch(patches.Circle((x, end_y), radius=main_db / 2, edgecolor='black', facecolor='#D32F2F'))
-    # Bottom Row
-    for x in xs:
         ax.add_patch(patches.Circle((x, start_y), radius=main_db / 2, edgecolor='black', facecolor='#D32F2F'))
-    # Side Bars (excluding corners)
     if ny > 2:
         for y in ys[1:-1]:
             ax.add_patch(patches.Circle((start_x, y), radius=main_db / 2, edgecolor='black', facecolor='#D32F2F'))
             ax.add_patch(patches.Circle((end_x, y), radius=main_db / 2, edgecolor='black', facecolor='#D32F2F'))
 
-    ax.set_xlim(-50, b + 50)
-    ax.set_ylim(-50, h + 50)
-    ax.axis('off')
+    ax.set_xlim(-50, b + 50);
+    ax.set_ylim(-50, h + 50);
+    ax.axis('off');
     ax.set_aspect('equal')
     ax.set_title(title, fontweight='bold')
 
-    # Text info
     info = f"Size: {b / 10:.0f}x{h / 10:.0f} cm\nMain: {2 * nx + 2 * max(0, ny - 2)}-DB{main_db:.0f}\nTies: RB{tie_db:.0f}@{tie_s / 10:.0f}cm"
     ax.text(b / 2, -h * 0.2, info, ha='center', va='top', fontsize=10, bbox=dict(facecolor='white', alpha=0.8))
-
     return fig
 
 
 def plot_interaction_diagram(curve_points, Pu_tf, Mu_tfm):
     fig, ax = plt.subplots(figsize=(5, 5))
+    Ms = [p['M'] / 9806650.0 for p in curve_points]
+    Ps = [p['P'] / 9806.65 for p in curve_points]
 
-    # Extract curve data
-    Ms = [p['M'] / 9806650.0 for p in curve_points]  # Nmm to tf-m
-    Ps = [p['P'] / 9806.65 for p in curve_points]  # N to tf
+    ax.plot(Ms, Ps, 'b-', linewidth=2, label='Capacity φPn-φMn')
+    ax.plot([0, Ms[-1]], [0, Ps[-1]], 'b--')
+    ax.plot([0, 0], [0, Ps[0]], 'b-')
+    ax.plot(Mu_tfm, Pu_tf, 'ro', markersize=8, label='Design Load')
 
-    # Plot Capacity Curve
-    ax.plot(Ms, Ps, 'b-', linewidth=2, label='φPn - φMn Capacity')
-    ax.plot([0, Ms[-1]], [0, Ps[-1]], 'b--')  # Close loop to origin (approx)
-    ax.plot([0, 0], [0, Ps[0]], 'b-')  # Y-axis cap
-
-    # Plot Design Point
-    ax.plot(Mu_tfm, Pu_tf, 'ro', markersize=8, label='Design Load (Pu, Mu)')
-
-    # Formatting
-    ax.set_xlabel('Moment φMn (tf-m)')
+    ax.set_xlabel('Moment φMn (tf-m)');
     ax.set_ylabel('Axial Load φPn (tf)')
     ax.set_title('P-M Interaction Diagram', fontweight='bold')
-    ax.grid(True, linestyle='--', alpha=0.6)
+    ax.grid(True, linestyle='--', alpha=0.6);
     ax.legend()
-
-    # Check status for background color
-    # Simple check: is point below max P and "inside" M?
-    # (Visually sufficient for report)
-
     return fig
 
 
@@ -428,7 +404,7 @@ def generate_column_report(inputs, rows, img_sect, img_pm):
             .info-box {{ width: 48%; border: 1px solid #ddd; padding: 10px; }}
 
             .images {{ display: flex; justify-content: space-around; margin: 20px 0; align-items: center; }}
-            .images img {{ width: 45%; border: 1px solid #ddd; padding: 5px; }}
+            .images img {{ width: 40%; border: 1px solid #ddd; padding: 5px; }}
 
             table {{ width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }}
             th, td {{ border: 1px solid #444; padding: 6px; }}
@@ -482,15 +458,15 @@ def generate_column_report(inputs, rows, img_sect, img_pm):
             <img src="{img_pm}" />
         </div>
 
-        <br><br>
+        <br><br><br><br>
 
         <h3>Calculation Details</h3>
         <table>
             <thead>
                 <tr>
-                    <th width="25%">Item</th>
+                    <th width="20%">Item</th>
                     <th width="30%">Formula</th>
-                    <th width="20%">Substitution</th>
+                    <th width="25%">Substitution</th>
                     <th>Result</th>
                     <th>Unit</th>
                     <th>Status</th>
