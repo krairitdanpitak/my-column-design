@@ -448,7 +448,7 @@ def generate_column_report(inputs, rows, img_sect, img_pm):
             <img src="{img_pm}" />
         </div>
 
-        <br><br><br><br><br>
+        <br><br><br><br><br><br>
 
         <h3>Calculation Details</h3>
         <table>
