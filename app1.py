@@ -13,38 +13,32 @@ import streamlit.components.v1 as components
 # ==========================================
 # 1. SETUP & CSS
 # ==========================================
-st.set_page_config(page_title="RC Column Design SDM", layout="wide")
+st.set_page_config(page_title="RC Column Design (Auto)", layout="wide")
 
 st.markdown("""
 <style>
-    /* CSS ปุ่มพิมพ์ */
+    /* ปุ่มพิมพ์ */
     .print-btn-internal {
-        background-color: #008CBA;
-        border: none;
-        color: white !important;
-        padding: 12px 28px;
-        text-align: center;
-        text-decoration: none;
-        display: inline-block;
-        font-size: 16px;
-        margin: 10px 0px;
-        cursor: pointer;
-        border-radius: 5px;
-        font-family: 'Sarabun', sans-serif;
-        font-weight: bold;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        background-color: #008CBA; border: none; color: white !important;
+        padding: 12px 28px; text-align: center; text-decoration: none;
+        display: inline-block; font-size: 16px; margin: 10px 0px;
+        cursor: pointer; border-radius: 5px; font-family: 'Sarabun', sans-serif;
+        font-weight: bold; box-shadow: 0 2px 5px rgba(0,0,0,0.2);
     }
     .print-btn-internal:hover { background-color: #005f7f; }
 
-    /* CSS ตาราง */
+    /* ตาราง */
     .report-table {width: 100%; border-collapse: collapse; font-family: sans-serif; font-size: 14px;}
     .report-table th, .report-table td {border: 1px solid #ddd; padding: 8px;}
     .report-table th {background-color: #f2f2f2; text-align: center; font-weight: bold;}
-
+    .sec-row {background-color: #e0e0e0; font-weight: bold; font-size: 15px;}
     .pass-ok {color: green; font-weight: bold;}
     .pass-no {color: red; font-weight: bold;}
-    .sec-row {background-color: #e0e0e0; font-weight: bold; font-size: 15px;}
     .load-value {color: #D32F2F !important; font-weight: bold;}
+
+    /* รูปภาพ */
+    .drawing-container { display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; }
+    .drawing-box { border: 1px solid #ddd; padding: 10px; background-color: #fff; text-align: center; min-width: 300px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -80,50 +74,49 @@ def beta1FromFc(fc_MPa):
 
 
 # ==========================================
-# 3. CALCULATION LOGIC (ACI 318-19 COLUMN)
+# 3. CALCULATION LOGIC (ACI 318-19)
 # ==========================================
 def calculate_interaction_curve(b, h, cover, main_db, nx, ny, fc, fy):
-    """สร้างจุดบนกราฟ P-M Interaction Diagram"""
-    d_prime = cover + 10 + main_db / 2  # approx d'
+    """Generate P-M Interaction Diagram Points"""
+    d_prime = cover + 10 + main_db / 2
     d = h - d_prime
 
-    Ast = (2 * nx + 2 * (ny - 2)) * (math.pi * (main_db / 2) ** 2)
-    As_face = Ast / 2.0  # Simplify to 2 layers for curve generation
+    total_bars = 2 * nx + 2 * max(0, ny - 2)
+    Ast = total_bars * (math.pi * (main_db / 2) ** 2)
+    As_face = Ast / 2.0  # Simplified 2-layer model for curve generation
 
     points = []
 
-    # Pure Compression Point (Po)
+    # Po (Pure Compression)
     Ag = b * h
     Po = 0.85 * fc * (Ag - Ast) + fy * Ast
     Pn_max = 0.80 * Po  # Tied Column
 
-    # Generate points by varying Neutral Axis (c)
-    c_values = np.linspace(1.5 * h, 0.1 * h, 40)
+    # Iterate Neutral Axis (c)
+    c_values = np.linspace(1.5 * h, 0.1 * h, 30)
 
     for c in c_values:
         eps_cu = 0.003
         beta1 = beta1FromFc(fc)
         a = beta1 * c
 
-        # Concrete Force
         Cc = 0.85 * fc * b * min(a, h)
 
-        # Steel Forces
-        # Layer 1 (Compression side)
+        # Steel Layer 1 (Compression side)
         eps_s1 = eps_cu * (c - d_prime) / c
-        fs1 = min(fy, 200000 * eps_s1)
+        fs1 = min(fy, 200000 * eps_s1);
         fs1 = max(-fy, fs1)
         Fs1 = As_face * fs1
 
-        # Layer 2 (Tension side)
+        # Steel Layer 2 (Tension side)
         eps_s2 = eps_cu * (c - d) / c
-        fs2 = min(fy, 200000 * eps_s2)
+        fs2 = min(fy, 200000 * eps_s2);
         fs2 = max(-fy, fs2)
         Fs2 = As_face * fs2
 
         Pn = Cc + Fs1 + Fs2
 
-        # Moment about Plastic Centroid (h/2)
+        # Moment about Plastic Centroid
         Mc = Cc * (h / 2 - a / 2)
         Ms1 = Fs1 * (h / 2 - d_prime)
         Ms2 = -Fs2 * (d - h / 2)
@@ -138,17 +131,89 @@ def calculate_interaction_curve(b, h, cover, main_db, nx, ny, fc, fy):
         else:
             phi = 0.65 + (eps_t - 0.002) * (250 / 3)
 
-        # Cap Pn at Pn_max
-        phiPn_val = phi * Pn
-        limit_top = 0.65 * 0.80 * Po
-        if phiPn_val > limit_top: phiPn_val = limit_top
+        # Cap at Pn_max
+        phiPn = phi * Pn
+        limit_top = 0.65 * Pn_max
+        if phiPn > limit_top: phiPn = limit_top
 
-        points.append({'P': phiPn_val, 'M': phi * Mn, 'phi': phi})
+        points.append({'P': phiPn, 'M': phi * Mn})
 
-    # Pure Bending Point (approx)
-    points.append({'P': 0, 'M': points[-1]['M']})
+    points.append({'P': 0, 'M': points[-1]['M']})  # Pure Bending
 
-    return points, Ag, Ast
+    return points, Ag, Ast, limit_top
+
+
+def check_capacity(curve_points, Pu_target, Mu_target):
+    """Check if (Mu, Pu) is inside the curve"""
+    # 1. Check Axial Limit
+    max_P = curve_points[0]['P']
+    if Pu_target > max_P: return False
+
+    # 2. Check Moment at Pu level
+    # Interpolate M_cap at Pu_target
+    m_cap = 0
+    found = False
+    for i in range(len(curve_points) - 1):
+        p1 = curve_points[i]['P']
+        p2 = curve_points[i + 1]['P']
+        # Curve goes from High P to Low P
+        if p2 <= Pu_target <= p1:
+            ratio = (Pu_target - p2) / (p1 - p2 + 1e-9)
+            m1 = curve_points[i]['M']
+            m2 = curve_points[i + 1]['M']
+            m_cap = m2 + ratio * (m1 - m2)
+            found = True
+            break
+
+    if not found:
+        # If Pu is negative (tension) or very low, assume pure bending cap
+        if Pu_target <= 0:
+            m_cap = curve_points[-1]['M']
+        else:
+            return False
+
+    return Mu_target <= m_cap
+
+
+def auto_design_reinforcement(inputs):
+    """Loop to find min bars that satisfy loads"""
+    b = inputs['b'] * 10;
+    h = inputs['h'] * 10
+    cover = inputs['cover'] * 10
+    fc = inputs['fc'] * 0.0980665;
+    fy = inputs['fy'] * 0.0980665
+    main_key = inputs['mainBar']
+    db_main = BAR_INFO[main_key]['d_mm']
+
+    Pu_N = inputs['Pu'] * 9806.65
+    Mu_Nmm = inputs['Mu'] * 9806650.0
+
+    best_nx, best_ny = 0, 0
+    min_steel_area = 999999
+    found_solution = False
+
+    # Loop ranges (e.g., 2 to 10 bars per face)
+    for nx in range(2, 10):
+        for ny in range(2, 10):
+            total_bars = 2 * nx + 2 * max(0, ny - 2)
+            Ast = total_bars * (math.pi * (db_main / 2) ** 2)
+            rho = Ast / (b * h)
+
+            # Constraints: 1% <= rho <= 8%
+            if rho > 0.08: continue
+
+            # Calculate Curve
+            curve, _, _, _ = calculate_interaction_curve(b, h, cover, db_main, nx, ny, fc, fy)
+
+            # Check Capacity
+            if check_capacity(curve, Pu_N, Mu_Nmm):
+                if Ast < min_steel_area:
+                    min_steel_area = Ast
+                    best_nx = nx
+                    best_ny = ny
+                    found_solution = True
+
+    return found_solution, best_nx, best_ny
 
 
 def process_column_calculation(inputs):
@@ -160,130 +225,83 @@ def process_column_calculation(inputs):
     def row(item, formula, subs, result, unit, status=""):
         rows.append([item, formula, subs, result, unit, status])
 
-    # 1. Inputs & Conversions
+    # Inputs
     b = inputs['b'] * 10;
-    h = inputs['h'] * 10  # mm
+    h = inputs['h'] * 10
     cover = inputs['cover'] * 10
-    fc = inputs['fc'] * 0.0980665  # MPa
+    fc = inputs['fc'] * 0.0980665
     fy = inputs['fy'] * 0.0980665
-    fyt = inputs['fyt'] * 0.0980665
-
     main_key = inputs['mainBar']
-    tie_key = inputs['tieBar']
     nx = int(inputs['nx'])
     ny = int(inputs['ny'])
+    db_main = BAR_INFO[main_key]['d_mm']
 
     Pu_tf = inputs['Pu']
     Mu_tfm = inputs['Mu']
 
-    # --- 1. MATERIAL & GEOMETRY ---
-    sec("1. MATERIAL & SECTION PROPERTIES")
-    row("Concrete & Steel", "fc', fy", f"{fmt(fc, 2)}, {fmt(fy, 0)}", "-", "MPa")
-    row("Section Size", "b x h", f"{fmt(b, 0)} x {fmt(h, 0)}", "-", "mm")
-
-    beta1 = beta1FromFc(fc)
-    row("β1 Factor", "0.85 - 0.05(fc'-28)/7", f"fc'={fmt(fc, 2)}", f"{fmt(beta1, 2)}", "-")
-
+    # 1. Properties
+    sec("1. PROPERTIES")
+    row("Materials", "fc', fy", f"{fmt(fc, 2)}, {fmt(fy, 0)}", "-", "MPa")
     Ag = b * h
-    row("Gross Area (Ag)", "b · h", f"{fmt(b, 0)}·{fmt(h, 0)}", f"{fmt(Ag, 0)}", "mm²")
+    row("Gross Area", "Ag = b·h", f"{b:.0f}·{h:.0f}", f"{Ag:.0f}", "mm²")
 
-    # Rebar Calculation
+    # 2. Reinforcement
+    sec("2. REINFORCEMENT")
     total_bars = 2 * nx + 2 * max(0, ny - 2)
-    bar_area_one = BAR_INFO[main_key]['A_cm2'] * 100
-    Ast = total_bars * bar_area_one
-
-    row("Main Reinforcement", f"Total {total_bars}-{main_key}",
-        f"{total_bars} x {fmt(bar_area_one, 0)}",
-        f"{fmt(Ast, 0)}", "mm²")
-
+    bar_area = BAR_INFO[main_key]['A_cm2'] * 100
+    Ast = total_bars * bar_area
     rho_g = Ast / Ag
-    status_rho = "OK" if 0.01 <= rho_g <= 0.08 else "FAIL"
-    row("Reinforcement Ratio", "ρg = Ast / Ag", f"{fmt(Ast, 0)} / {fmt(Ag, 0)}", f"{fmt(rho_g * 100, 2)}", "%",
-        status_rho)
 
-    # --- 2. AXIAL CAPACITY (Compression) ---
-    sec("2. AXIAL LOAD CAPACITY")
+    st_rho = "OK" if 0.01 <= rho_g <= 0.08 else "FAIL"
+    row("Provided", f"{total_bars}-{main_key}", f"{total_bars} x {bar_area:.0f}", f"{Ast:.0f}", "mm²")
+    row("Ratio ρg", "Ast / Ag", f"{Ast:.0f} / {Ag:.0f}", f"{rho_g * 100:.2f}", "%", st_rho)
 
-    # Po
-    Po_N = 0.85 * fc * (Ag - Ast) + fy * Ast
-    Po_tf = Po_N / 9806.65
+    # 3. Capacity
+    sec("3. CAPACITY CHECK")
+    curve_points, _, _, limit_top = calculate_interaction_curve(b, h, cover, db_main, nx, ny, fc, fy)
 
-    row("Nominal Axial (Po)", "0.85fc'(Ag-Ast) + fy·Ast",
-        f"0.85·{fmt(fc, 1)}·({fmt(Ag, 0)}-{fmt(Ast, 0)}) + ...",
-        f"{fmt(Po_tf, 2)}", "tf")
-
-    # Phi Pn Max
-    phi_c = 0.65
-    phiPn_max_N = phi_c * 0.80 * Po_N
-    phiPn_max_tf = phiPn_max_N / 9806.65
-
-    row("Max Design Axial", "φPn,max = 0.65·0.80·Po",
-        f"0.52 · {fmt(Po_tf, 2)}",
-        f"{fmt(phiPn_max_tf, 2)}", "tf")
-
-    # Check Axial
-    row("Load Input (Pu)", "-", "-", f"{fmt(Pu_tf, 3)}", "tf", "", )  # Red handled by CSS
-
-    status_axial = "PASS" if Pu_tf <= phiPn_max_tf else "FAIL"
-    row("Axial Check", "Pu ≤ φPn,max", f"{fmt(Pu_tf, 2)} ≤ {fmt(phiPn_max_tf, 2)}", status_axial, "-", status_axial)
-
-    # --- 3. TIE DESIGN ---
-    sec("3. TIE (STIRRUP) DESIGN")
-    db_main = BAR_INFO[main_key]['d_mm']
-    db_tie = BAR_INFO[tie_key]['d_mm']
-
-    s1 = 16 * db_main
-    s2 = 48 * db_tie
-    s3 = min(b, h)
-    s_req = min(s1, s2, s3)
-
-    row("Spacing Limit 1", "16 · db(main)", f"16 · {db_main}", f"{s1:.0f}", "mm")
-    row("Spacing Limit 2", "48 · db(tie)", f"48 · {db_tie}", f"{s2:.0f}", "mm")
-    row("Spacing Limit 3", "Least Dimension", f"min({b},{h})", f"{s3:.0f}", "mm")
-
-    s_prov = math.floor(s_req / 25.0) * 25.0
-    if s_prov < 50: s_prov = 50
-
-    row("Provide Ties", f"Use {tie_key}", f"min({s1:.0f},{s2:.0f},{s3:.0f})", f"@{s_prov / 10:.0f} cm", "-", "OK")
-
-    # --- 4. INTERACTION CHECK ---
-    sec("4. MOMENT CAPACITY CHECK")
-
-    curve_points, _, _ = calculate_interaction_curve(b, h, cover, db_main, nx, ny, fc, fy)
-
-    # Find M capacity at Pu (Interpolation)
     Pu_N = Pu_tf * 9806.65
-    m_cap_Nmm = 0
+    Mu_Nmm = Mu_tfm * 9806650.0
 
+    # Axial Check
+    phiPn_max_tf = (limit_top) / 9806.65
+    st_ax = "PASS" if Pu_N <= limit_top else "FAIL"
+    row("Load Pu", "-", "-", f"{fmt(Pu_tf, 2)}", "tf", "")
+    row("Max Axial", "φPn,max", f"0.65·0.80·Po", f"{fmt(phiPn_max_tf, 2)}", "tf", st_ax)
+
+    # Interaction Check
+    # Interpolate M capacity at Pu
+    m_cap_Nmm = 0
     found = False
     for i in range(len(curve_points) - 1):
-        p1 = curve_points[i]['P']
+        p1 = curve_points[i]['P'];
         p2 = curve_points[i + 1]['P']
         if p2 <= Pu_N <= p1:
-            ratio = (Pu_N - p2) / (p1 - p2 + 1e-9)
-            m1 = curve_points[i]['M']
-            m2 = curve_points[i + 1]['M']
-            m_cap_Nmm = m2 + ratio * (m1 - m2)
-            found = True
+            r = (Pu_N - p2) / (p1 - p2 + 1e-9)
+            m_cap_Nmm = curve_points[i + 1]['M'] + r * (curve_points[i]['M'] - curve_points[i + 1]['M'])
+            found = True;
             break
-
-    if not found:
-        if Pu_N > curve_points[0]['P']:
-            m_cap_Nmm = 0
-        else:
-            m_cap_Nmm = curve_points[-1]['M']
+    if not found and Pu_N <= curve_points[0]['P']: m_cap_Nmm = curve_points[-1]['M']  # Low load
 
     m_cap_tfm = m_cap_Nmm / 9806650.0
+    st_pm = "PASS" if Mu_tfm <= m_cap_tfm and st_ax == "PASS" else "FAIL"
 
-    row("Load Input (Mu)", "-", "-", f"{fmt(Mu_tfm, 3)}", "tf-m", "")
-    row("Moment Capacity", "φMn @ Pu", f"Interpolated from Curve", f"{fmt(m_cap_tfm, 2)}", "tf-m")
+    row("Load Mu", "-", "-", f"{fmt(Mu_tfm, 2)}", "tf-m", "")
+    row("Capacity φMn", "at Pu", f"Interpolated", f"{fmt(m_cap_tfm, 2)}", "tf-m", st_pm)
 
-    status_pm = "PASS" if Mu_tfm <= m_cap_tfm else "FAIL"
-    row("Interaction Check", "Mu ≤ φMn", f"{fmt(Mu_tfm, 2)} ≤ {fmt(m_cap_tfm, 2)}", status_pm, "-", status_pm)
+    sec("4. TIES")
+    tie_key = inputs['tieBar']
+    db_tie = BAR_INFO[tie_key]['d_mm']
+    s1 = 16 * db_main;
+    s2 = 48 * db_tie;
+    s3 = min(b, h)
+    s_req = min(s1, s2, s3)
+    s_prov = math.floor(s_req / 25) * 25
+    row("Spacing", "min(16db, 48dt, dim)", f"min({s1:.0f},{s2:.0f},{s3:.0f})", f"@{s_prov / 10:.0f} cm", "-", "OK")
 
-    sec("5. FINAL STATUS")
-    overall = "OK" if (status_rho == "OK" and status_axial == "PASS" and status_pm == "PASS") else "NOT OK"
-    row("Overall", "-", "-", "DESIGN COMPLETE", "-", overall)
+    sec("5. CONCLUSION")
+    overall = "OK" if st_rho == "OK" and st_pm == "PASS" else "NOT OK"
+    row("Status", "-", "-", overall, "-", overall)
 
     return rows, curve_points, total_bars, s_prov
 
@@ -292,19 +310,18 @@ def process_column_calculation(inputs):
 # 4. PLOTTING
 # ==========================================
 def fig_to_base64(fig):
-    buf = io.BytesIO()
-    fig.savefig(buf, format='png', bbox_inches='tight')
+    buf = io.BytesIO();
+    fig.savefig(buf, format='png', bbox_inches='tight');
     buf.seek(0)
     return f"data:image/png;base64,{base64.b64encode(buf.read()).decode()}"
 
 
-def plot_column_section(b, h, cover, main_db, tie_db, nx, ny, tie_s, title="Column Section"):
+def plot_sect(b, h, cover, main_db, tie_db, nx, ny, tie_s):
     fig, ax = plt.subplots(figsize=(4, 4))
-    rect = patches.Rectangle((0, 0), b, h, linewidth=2, edgecolor='#333', facecolor='#eee')
+    rect = patches.Rectangle((0, 0), b, h, lw=2, ec='#333', fc='#eee')
     ax.add_patch(rect)
     margin = cover + tie_db / 2
-    rect_tie = patches.Rectangle((margin, margin), b - 2 * margin, h - 2 * margin, linewidth=2, edgecolor='#1976D2',
-                                 facecolor='none', linestyle='-')
+    rect_tie = patches.Rectangle((margin, margin), b - 2 * margin, h - 2 * margin, lw=2, ec='#1976D2', fc='none')
     ax.add_patch(rect_tie)
 
     start_x = margin + main_db / 2;
@@ -314,243 +331,146 @@ def plot_column_section(b, h, cover, main_db, tie_db, nx, ny, tie_s, title="Colu
     end_y = h - margin - main_db / 2
     ys = np.linspace(start_y, end_y, ny) if ny > 1 else [h / 2]
 
-    # Plot Bars
     for x in xs:
-        ax.add_patch(patches.Circle((x, end_y), radius=main_db / 2, edgecolor='black', facecolor='#D32F2F'))
-        ax.add_patch(patches.Circle((x, start_y), radius=main_db / 2, edgecolor='black', facecolor='#D32F2F'))
+        ax.add_patch(patches.Circle((x, end_y), main_db / 2, ec='k', fc='#D32F2F'))
+        ax.add_patch(patches.Circle((x, start_y), main_db / 2, ec='k', fc='#D32F2F'))
     if ny > 2:
         for y in ys[1:-1]:
-            ax.add_patch(patches.Circle((start_x, y), radius=main_db / 2, edgecolor='black', facecolor='#D32F2F'))
-            ax.add_patch(patches.Circle((end_x, y), radius=main_db / 2, edgecolor='black', facecolor='#D32F2F'))
+            ax.add_patch(patches.Circle((start_x, y), main_db / 2, ec='k', fc='#D32F2F'))
+            ax.add_patch(patches.Circle((end_x, y), main_db / 2, ec='k', fc='#D32F2F'))
 
     ax.set_xlim(-50, b + 50);
     ax.set_ylim(-50, h + 50);
     ax.axis('off');
     ax.set_aspect('equal')
-    ax.set_title(title, fontweight='bold')
-
-    info = f"Size: {b / 10:.0f}x{h / 10:.0f} cm\nMain: {2 * nx + 2 * max(0, ny - 2)}-DB{main_db:.0f}\nTies: RB{tie_db:.0f}@{tie_s / 10:.0f}cm"
-    ax.text(b / 2, -h * 0.2, info, ha='center', va='top', fontsize=10, bbox=dict(facecolor='white', alpha=0.8))
+    ax.set_title(f"{2 * nx + 2 * max(0, ny - 2)}-DB{main_db:.0f}", fontweight='bold')
     return fig
 
 
-def plot_interaction_diagram(curve_points, Pu_tf, Mu_tfm):
+def plot_pm(curve, Pu, Mu):
     fig, ax = plt.subplots(figsize=(5, 5))
-    Ms = [p['M'] / 9806650.0 for p in curve_points]
-    Ps = [p['P'] / 9806.65 for p in curve_points]
-
-    ax.plot(Ms, Ps, 'b-', linewidth=2, label='Capacity φPn-φMn')
+    Ms = [p['M'] / 9806650.0 for p in curve]
+    Ps = [p['P'] / 9806.65 for p in curve]
+    ax.plot(Ms, Ps, 'b-', lw=2, label='Capacity')
     ax.plot([0, Ms[-1]], [0, Ps[-1]], 'b--')
     ax.plot([0, 0], [0, Ps[0]], 'b-')
-    ax.plot(Mu_tfm, Pu_tf, 'ro', markersize=8, label='Design Load')
-
-    ax.set_xlabel('Moment φMn (tf-m)');
-    ax.set_ylabel('Axial Load φPn (tf)')
-    ax.set_title('P-M Interaction Diagram', fontweight='bold')
-    ax.grid(True, linestyle='--', alpha=0.6);
+    ax.plot(Mu, Pu, 'ro', ms=8, label='Load')
+    ax.set_xlabel('Moment (tf-m)');
+    ax.set_ylabel('Axial (tf)')
+    ax.grid(True, ls='--', alpha=0.6);
     ax.legend()
     return fig
 
 
 # ==========================================
-# 5. REPORT GENERATOR
+# 5. UI & REPORT
 # ==========================================
-def generate_column_report(inputs, rows, img_sect, img_pm):
-    table_rows = ""
-    for r in rows:
-        if r[0] == "SECTION":
-            table_rows += f"<tr class='sec-row'><td colspan='6'>{r[1]}</td></tr>"
-        else:
-            status_cls = "pass-ok" if "OK" in r[5] or "PASS" in r[5] else "pass-no"
-            val_cls = "load-value" if "Load Input" in str(r[0]) else ""
-            table_rows += f"""
-            <tr>
-                <td>{r[0]}</td>
-                <td>{r[1]}</td>
-                <td>{r[2]}</td>
-                <td class='{val_cls}'>{r[3]}</td>
-                <td>{r[4]}</td>
-                <td class='{status_cls}'>{r[5]}</td>
-            </tr>
-            """
-
-    html = f"""
-    <!DOCTYPE html>
-    <html lang="th">
-    <head>
-        <meta charset="UTF-8">
-        <title>Column Design Report</title>
-        <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
-        <style>
-            body {{ font-family: 'Sarabun', sans-serif; padding: 20px; color: black; }}
-            h1, h3 {{ text-align: center; margin: 5px; }}
-            .header {{ position: relative; margin-bottom: 20px; border-bottom: 2px solid #333; padding-bottom: 10px; }}
-            .beam-box {{
-                position: absolute; top: 0; right: 0;
-                border: 2px solid #333; padding: 5px 15px;
-                font-size: 18px; font-weight: bold;
-            }}
-            .info-container {{ display: flex; justify-content: space-between; margin-bottom: 20px; }}
-            .info-box {{ width: 48%; border: 1px solid #ddd; padding: 10px; }}
-
-            .images {{ display: flex; justify-content: space-around; margin: 20px 0; align-items: center; }}
-            .images img {{ width: 40%; border: 1px solid #ddd; padding: 5px; }}
-
-            table {{ width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }}
-            th, td {{ border: 1px solid #444; padding: 6px; }}
-            th {{ background-color: #eee; }}
-            .sec-row {{ background-color: #ddd; font-weight: bold; }}
-            .pass-ok {{ color: green; font-weight: bold; text-align: center; }}
-            .pass-no {{ color: red; font-weight: bold; text-align: center; }}
-            .load-value {{ color: #D32F2F !important; font-weight: bold; }}
-
-            .footer-section {{ margin-top: 40px; page-break-inside: avoid; }}
-            .signature-block {{ width: 300px; text-align: center; }}
-            .sign-line {{ border-bottom: 1px solid #000; margin: 40px 0 10px 0; }}
-
-            @media print {{
-                .no-print {{ display: none !important; }}
-                body {{ padding: 0; }}
-            }}
-            .print-btn-internal {{
-                background-color: #4CAF50; color: white; padding: 12px 24px;
-                border: none; border-radius: 5px; cursor: pointer; font-size: 16px; margin-bottom: 20px;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="no-print" style="text-align: center;">
-            <button onclick="window.print()" class="print-btn-internal">🖨️ Print This Page / พิมพ์หน้านี้</button>
-        </div>
-
-        <div class="header">
-            <div class="beam-box">{inputs['col_id']}</div>
-            <h1>ENGINEERING DESIGN REPORT</h1>
-            <h3>RC Column Design SDM (ACI 318-19)</h3>
-        </div>
-
-        <div class="info-container">
-            <div class="info-box">
-                <strong>Project:</strong> {inputs['project']}<br>
-                <strong>Engineer:</strong> {inputs['engineer']}<br>
-                <strong>Date:</strong> 15/12/2568
-            </div>
-            <div class="info-box">
-                <strong>Materials:</strong> fc'={inputs['fc']} ksc, fy={inputs['fy']} ksc<br>
-                <strong>Section:</strong> {inputs['b']} x {inputs['h']} cm<br>
-                <strong>Rebar:</strong> Main {inputs['mainBar']}, Tie {inputs['tieBar']}
-            </div>
-        </div>
-
-        <h3>Design Summary</h3>
-        <div class="images">
-            <img src="{img_sect}" />
-            <img src="{img_pm}" />
-        </div>
-
-        <br><br><br><br><br><br>
-
-        <h3>Calculation Details</h3>
-        <table>
-            <thead>
-                <tr>
-                    <th width="20%">Item</th>
-                    <th width="30%">Formula</th>
-                    <th width="25%">Substitution</th>
-                    <th>Result</th>
-                    <th>Unit</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                {table_rows}
-            </tbody>
-        </table>
-
-        <div class="footer-section">
-            <div class="signature-block">
-                <div style="text-align: left; font-weight: bold;">Designed by:</div>
-                <div class="sign-line"></div>
-                <div>({inputs['engineer']})</div>
-                <div>วิศวกรโครงสร้าง</div>
-            </div>
-        </div>
-    </body>
-    </html>
-    """
-    return html
-
-
-# ==========================================
-# 6. MAIN UI
-# ==========================================
-st.title("RC Column Design SDM")
-
-if 'calc_done' not in st.session_state:
-    st.session_state['calc_done'] = False
+st.title("RC Column Design (Auto)")
 
 with st.sidebar.form("inputs"):
     st.header("Project Info")
-    project = st.text_input("Project Name", "อาคารสำนักงาน 2 ชั้น")
-    col_id = st.text_input("Column Number", "C-01")
-    engineer = st.text_input("Engineer Name", "นายไกรฤทธิ์ ด่านพิทักษ์")
+    project = st.text_input("Project", "Office Building")
+    col_id = st.text_input("Column ID", "C-01")
+    engineer = st.text_input("Engineer", "Mr. Engineer")
 
-    st.header("1. Material & Geometry")
+    st.header("1. Properties")
     c1, c2 = st.columns(2)
-    fc = c1.number_input("fc' (ksc)", 240)
+    fc = c1.number_input("fc' (ksc)", 240);
     fy = c2.number_input("fy (ksc)", 4000)
-    fyt = st.number_input("fyt (Tie) (ksc)", 2400)
-
-    c1, c2, c3 = st.columns(3)
-    b = c1.number_input("b (cm)", 25)
+    b = c1.number_input("b (cm)", 25);
     h = c2.number_input("h (cm)", 25)
-    cover = c3.number_input("Cover (cm)", 3.0)
+    cover = st.number_input("Cover (cm)", 3.0)
 
     st.header("2. Reinforcement")
-    c1, c2 = st.columns(2)
-    mainBar = c1.selectbox("Main Bar", list(BAR_INFO.keys()), index=4)  # DB16
-    tieBar = c2.selectbox("Tie Bar", ['RB6', 'RB9', 'DB10'], index=0)
+    # Auto Selection Mode
+    design_mode = st.radio("Design Mode", ["Manual", "Auto-Design"])
 
-    st.write("Number of bars per face:")
-    c1, c2 = st.columns(2)
-    nx = c1.number_input("Nx (bars along X)", 2, help="จำนวนเส้นในแนวแกน X (รวมมุม)")
-    ny = c2.number_input("Ny (bars along Y)", 2, help="จำนวนเส้นในแนวแกน Y (รวมมุม)")
+    mainBar = st.selectbox("Main Bar", list(BAR_INFO.keys()), index=4)
+    tieBar = st.selectbox("Tie Bar", ['RB6', 'RB9', 'DB10'], index=0)
 
-    st.header("3. Loads (Factored)")
-    Pu = st.number_input("Axial Load Pu (tf)", 40.0)
-    Mu = st.number_input("Moment Mu (tf-m)", 2.0)
+    if design_mode == "Manual":
+        nx = st.number_input("Nx (bars along X)", 2)
+        ny = st.number_input("Ny (bars along Y)", 2)
+    else:
+        st.info(f"Program will find optimal Nx, Ny for {mainBar}")
+        nx = 2  # Placeholder
+        ny = 2  # Placeholder
+
+    st.header("3. Loads")
+    Pu = st.number_input("Pu (tf)", 40.0)
+    Mu = st.number_input("Mu (tf-m)", 2.0)
 
     run_btn = st.form_submit_button("Run Design")
 
 if run_btn:
-    inputs = {
+    # Prepare inputs dictionary
+    data = {
         'project': project, 'col_id': col_id, 'engineer': engineer,
-        'fc': fc, 'fy': fy, 'fyt': fyt,
-        'b': b, 'h': h, 'cover': cover,
+        'fc': fc, 'fy': fy, 'b': b, 'h': h, 'cover': cover,
         'mainBar': mainBar, 'tieBar': tieBar,
-        'nx': nx, 'ny': ny,
         'Pu': Pu, 'Mu': Mu
     }
 
-    # 1. Calculate
-    rows, curve, total_bars, s_prov = process_column_calculation(inputs)
+    if design_mode == "Auto-Design":
+        found, best_nx, best_ny = auto_design_reinforcement(data)
+        if found:
+            data['nx'] = best_nx
+            data['ny'] = best_ny
+            st.success(
+                f"✅ Auto-Design Found: Use {2 * best_nx + 2 * max(0, best_ny - 2)}-{mainBar} (Nx={best_nx}, Ny={best_ny})")
+        else:
+            st.error("❌ Auto-Design Failed: Section too small or loads too high for this bar size.")
+            st.stop()
+    else:
+        data['nx'] = nx
+        data['ny'] = ny
 
-    # 2. Draw
-    # Section
-    main_db = BAR_INFO[mainBar]['d_mm']
-    tie_db = BAR_INFO[tieBar]['d_mm']
-    fig_sect = plot_column_section(b * 10, h * 10, cover * 10, main_db, tie_db, int(nx), int(ny), s_prov)
-    img_sect = fig_to_base64(fig_sect)
+    # Run Calculation
+    rows, curve, total_bars, s_prov = process_column_calculation(data)
 
-    # P-M Curve
-    fig_pm = plot_interaction_diagram(curve, Pu, Mu)
-    img_pm = fig_to_base64(fig_pm)
+    # Plotting
+    db_m = BAR_INFO[mainBar]['d_mm'];
+    db_t = BAR_INFO[tieBar]['d_mm']
+    img1 = fig_to_base64(plot_sect(b * 10, h * 10, cover * 10, db_m, db_t, int(data['nx']), int(data['ny']), s_prov))
+    img2 = fig_to_base64(plot_pm(curve, Pu, Mu))
 
-    # 3. Report
-    html_report = generate_column_report(inputs, rows, img_sect, img_pm)
+    # HTML Report
+    t_rows = "".join([
+                         f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td><td class='load-value'>{r[3]}</td><td>{r[4]}</td><td class='{('pass-ok' if 'PASS' in r[5] or 'OK' in r[5] else 'pass-no')}'>{r[5]}</td></tr>" if
+                         r[0] != "SECTION" else f"<tr class='sec-row'><td colspan='6'>{r[1]}</td></tr>" for r in rows])
 
-    st.success(f"✅ Design Complete: Use {total_bars}-{mainBar}, Ties {tieBar}@{s_prov / 10:.0f}cm")
-    st.components.v1.html(html_report, height=800, scrolling=True)
-
+    html = f"""
+    <div style="font-family: Sarabun, sans-serif; padding: 20px;">
+        <div style="text-align:center; border-bottom: 2px solid #333; margin-bottom: 20px;">
+            <div style="float:right; border:2px solid #333; padding:5px 10px; font-weight:bold;">{col_id}</div>
+            <h2>ENGINEERING DESIGN REPORT</h2>
+            <h4>RC Column Design (ACI 318-19)</h4>
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-bottom:20px;">
+            <div style="border:1px solid #ddd; padding:10px; width:48%;">
+                <strong>Project:</strong> {project}<br><strong>Engineer:</strong> {engineer}
+            </div>
+            <div style="border:1px solid #ddd; padding:10px; width:48%;">
+                <strong>Section:</strong> {b}x{h} cm<br><strong>Loads:</strong> Pu={Pu}tf, Mu={Mu}tf-m
+            </div>
+        </div>
+        <div class="drawing-container">
+            <div class="drawing-box"><img src="{img1}" style="max-width:100%;"></div>
+            <div class="drawing-box"><img src="{img2}" style="max-width:100%;"></div>
+        </div>
+        <br>
+        <table class="report-table">
+            <thead><tr><th width="20%">Item</th><th width="25%">Formula</th><th width="30%">Substitution</th><th>Result</th><th>Unit</th><th>Status</th></tr></thead>
+            <tbody>{t_rows}</tbody>
+        </table>
+        <div style="margin-top:40px; text-align:center;">
+            <div style="display:inline-block; width:250px; text-align:left;">
+                <strong>Designed by:</strong><br><br><div style="border-bottom:1px solid #000;"></div>
+                <div style="text-align:center; margin-top:5px;">({engineer})<br>วิศวกรโครงสร้าง</div>
+            </div>
+        </div>
+    </div>
+    """
+    st.components.v1.html(html, height=1200, scrolling=True)
 else:
-    st.info("👈 กรุณากรอกข้อมูลเสาด้านซ้ายแล้วกด 'Run Design'")
+    st.info("👈 กรุณากรอกข้อมูลและกด Run Design")
