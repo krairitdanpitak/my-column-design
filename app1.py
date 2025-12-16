@@ -19,14 +19,26 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap');
 
+    /* ปรับแต่งปุ่ม Print ให้เหมือนในรูป (สีเขียว, ตัวหนังสือขาว, มีไอคอน) */
     .print-btn-internal {
-        background-color: #008CBA; border: none; color: white !important;
-        padding: 12px 28px; text-align: center; text-decoration: none;
-        display: inline-block; font-size: 16px; margin: 10px 0px;
-        cursor: pointer; border-radius: 5px; font-family: 'Sarabun', sans-serif; font-weight: bold;
+        background-color: #4CAF50; /* สีเขียวตามรูป */
+        border: none;
+        color: white !important;
+        padding: 12px 24px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 16px;
+        margin: 10px 0px;
+        cursor: pointer;
+        border-radius: 5px;
+        font-family: 'Sarabun', sans-serif;
+        font-weight: bold;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
     }
-    .print-btn-internal:hover { background-color: #005f7f; }
+    .print-btn-internal:hover { background-color: #45a049; }
 
+    /* CSS ตารางและอื่นๆ */
     .report-table {width: 100%; border-collapse: collapse; font-family: 'Sarabun', sans-serif; font-size: 14px;}
     .report-table th, .report-table td {border: 1px solid #ddd; padding: 8px;}
     .report-table th {background-color: #f2f2f2; text-align: center; font-weight: bold;}
@@ -34,8 +46,6 @@ st.markdown("""
     .pass-ok {color: green; font-weight: bold;}
     .pass-no {color: red; font-weight: bold;}
     .sec-row {background-color: #e0e0e0; font-weight: bold; font-size: 15px;}
-
-    /* CSS สำหรับค่า Load ที่เป็น Input ให้เป็นสีแดง */
     .load-value {color: #D32F2F !important; font-weight: bold;}
 </style>
 """, unsafe_allow_html=True)
@@ -75,14 +85,10 @@ def beta1FromFc(fc_MPa):
 # 3. SHEAR CHECK FUNCTION (REPORTING)
 # ==========================================
 def check_column_shear_aci318_19(pu_tf, vu_tf, fc_ksc, fy_tie_ksc, b_cm, h_cm, d_mm, av_mm2, s_mm):
-    """
-    ตรวจสอบและสร้างตารางรายการคำนวณแรงเฉือน (Reporting Only)
-    """
     rows = []
 
     def row(i, f, sub, r, u, st=""): rows.append([i, f, sub, r, u, st])
 
-    # Conversions
     Nu = pu_tf * 9806.65;
     Vu = vu_tf * 9806.65
     fc_mpa = fc_ksc * 0.0980665;
@@ -93,32 +99,27 @@ def check_column_shear_aci318_19(pu_tf, vu_tf, fc_ksc, fy_tie_ksc, b_cm, h_cm, d
 
     rows.append(["SECTION", "4. SHEAR CAPACITY CHECK (ACI 318-19)", "", "", "", ""])
 
-    # Vc
     nu_term = Nu / (14 * Ag)
     vc_val = 0.17 * (1 + nu_term) * math.sqrt(fc_mpa) * bw * d_mm
     phi_vc = phi_v * vc_val
     sub_vc = f"0.17(1 + {Nu / 1000:.0f}/(14·{Ag / 100:.0f}))√{fc_mpa:.0f}·{bw}·{d_mm:.0f}"
     row("Concrete Vc", "0.17(1 + Nu/14Ag)λ√fc bw d", sub_vc, f"{vc_val / 9806.65:.2f}", "tf", "")
 
-    # Vs
     vs_val = (av_mm2 * fyt_mpa * d_mm) / s_mm
     phi_vs = phi_v * vs_val
     sub_vs = f"({av_mm2:.0f} · {fyt_mpa:.0f} · {d_mm:.0f}) / {s_mm:.0f}"
     row("Steel Vs", "Av fyt d / s", sub_vs, f"{vs_val / 9806.65:.2f}", "tf", "")
 
-    # Check Max Vs Limit
     vs_max = 0.66 * math.sqrt(fc_mpa) * bw * d_mm
     if vs_val > vs_max:
         row("Vs Max Limit", "0.66√fc bw d", f"Vs {vs_val / 9806.65:.2f} > Max {vs_max / 9806.65:.2f}", "FAIL", "-",
             "FAIL")
 
-    # Total Capacity
     phi_vn = phi_vc + phi_vs
     status = "PASS" if phi_vn >= Vu else "FAIL"
     row("Total Capacity φVn", "φ(Vc + Vs)", f"{phi_vc / 9806.65:.2f} + {phi_vs / 9806.65:.2f}",
         f"{phi_vn / 9806.65:.2f}", "tf", status)
 
-    # CHANGED: Use "Load Input (Vu)" to trigger red color CSS
     row("Load Input (Vu)", "Shear Demand", "-", f"{vu_tf:.2f}", "tf", status)
 
     return rows, status
@@ -152,8 +153,6 @@ def calculate_interaction_curve(b, h, cover, main_db, nx, ny, fc, fy):
         Fs2 = As_face * fs2
 
         Pn = Cc + Fs1 + Fs2
-
-        # FIXED: Variable name 'Mc' -> 'Mn'
         Mn = Cc * (h / 2 - a / 2) + Fs1 * (h / 2 - d_prime) - Fs2 * (d - h / 2)
 
         eps_t = abs(eps_cu * (d - c) / c)
@@ -180,7 +179,6 @@ def process_column_calculation(inputs):
     def row(item, formula, subs, result, unit, status=""):
         rows.append([item, formula, subs, result, unit, status])
 
-    # Inputs
     b = inputs['b'] * 10;
     h = inputs['h'] * 10
     cover = inputs['cover'] * 10
@@ -214,56 +212,43 @@ def process_column_calculation(inputs):
     Po_N = 0.85 * fc_mpa * (Ag - Ast) + fy_mpa * Ast
     phiPn_max_tf = (0.65 * 0.80 * Po_N) / 9806.65
 
-    # ADDED: Explicit load input row to show red color
     row("Load Input (Pu)", "Factored Load", "-", f"{fmt(Pu_tf, 2)}", "tf", "")
 
     status_axial = "PASS" if Pu_tf <= phiPn_max_tf else "FAIL"
     row("Axial Capacity", "φPn,max = 0.52·Po", "-", f"{fmt(phiPn_max_tf, 2)}", "tf", "")
     row("Axial Check", "Pu ≤ φPn,max", f"{fmt(Pu_tf, 2)} ≤ {fmt(phiPn_max_tf, 2)}", status_axial, "-", status_axial)
 
-    # 3. TIE DESIGN (AUTO SPACING LOGIC)
+    # 3. TIE DESIGN
     sec("3. TIE (STIRRUP) DETAILING")
     db_main = BAR_INFO[main_key]['d_mm']
     db_tie = BAR_INFO[tie_key]['d_mm']
-    d = h - cover - db_main / 2 - db_tie  # Effective depth for shear
-    tie_area_mm2 = 2 * BAR_INFO[tie_key]['A_cm2'] * 100  # 2 Legs
+    d = h - cover - db_main / 2 - db_tie
+    tie_area_mm2 = 2 * BAR_INFO[tie_key]['A_cm2'] * 100
 
-    # 3.1 Geometric Limits
-    s_geo_1 = 16 * db_main
-    s_geo_2 = 48 * db_tie
-    s_geo_3 = min(b, h)
-    s_geo = min(s_geo_1, s_geo_2, s_geo_3)
+    s_geo = min(16 * db_main, 48 * db_tie, min(b, h))
+    row("Geo Limit", "min(16db, 48dt, dim)", f"min({16 * db_main:.0f}, {48 * db_tie:.0f}, {min(b, h):.0f})",
+        f"{s_geo:.0f}", "mm")
 
-    row("Geo Limit 1", "16 · db(main)", f"16 · {db_main}", f"{s_geo_1:.0f}", "mm")
-    row("Geo Limit 2", "Least Dim", f"min({b},{h})", f"{s_geo_3:.0f}", "mm")
-
-    # 3.2 Shear Requirement Logic
-    Nu_N = Pu_tf * 9806.65
+    Nu_N = Pu_tf * 9806.65;
     Vu_N = Vu_tf * 9806.65
-    phi_v = 0.75
-
     vc_val = 0.17 * (1 + Nu_N / (14 * Ag)) * math.sqrt(fc_mpa) * b * d
+    phi_v = 0.75;
     phi_vc = phi_v * vc_val
 
-    s_shear_req = 9999
+    s_shear_req = 9999;
     s_shear_max_code = 9999
-
     if Vu_N > phi_vc:
         vs_req = (Vu_N / phi_v) - vc_val
-        if vs_req > 0:
-            s_shear_req = (tie_area_mm2 * fyt_mpa * d) / vs_req
-
-        limit_threshold = 0.33 * math.sqrt(fc_mpa) * b * d
-        if vs_req <= limit_threshold:
+        if vs_req > 0: s_shear_req = (tie_area_mm2 * fyt_mpa * d) / vs_req
+        if vs_req <= 0.33 * math.sqrt(fc_mpa) * b * d:
             s_shear_max_code = min(d / 2, 600)
         else:
             s_shear_max_code = min(d / 4, 300)
-        check_msg = f"Shear Control (Vs needed)"
+        check_msg = "Shear Control"
     else:
         s_shear_max_code = min(d / 2, 600)
-        check_msg = "Min Ties (Vc > Vu/phi)"
+        check_msg = "Min Ties"
 
-    # 3.3 Final Selection
     s_final = min(s_geo, s_shear_req, s_shear_max_code)
     s_prov = math.floor(s_final / 10.0) * 10.0
     if s_prov < 50: s_prov = 50.0
@@ -296,8 +281,6 @@ def process_column_calculation(inputs):
                 break
 
     m_cap_tfm = m_cap_Nmm / 9806650.0
-
-    # ADDED: Explicit load input row to show red color
     row("Load Input (Mu)", "Factored Moment", "-", f"{fmt(Mu_tfm, 2)}", "tf-m", "")
 
     status_pm = "PASS" if Mu_tfm <= m_cap_tfm else "FAIL"
@@ -313,7 +296,6 @@ def process_column_calculation(inputs):
 
 
 def auto_design_reinforcement(inputs):
-    # Simplified Auto Design for Main bars only
     b = inputs['b'] * 10;
     h = inputs['h'] * 10
     cover = inputs['cover'] * 10
@@ -417,7 +399,6 @@ def generate_column_report(inputs, rows, img_sect, img_pm):
             table_rows += f"<tr class='sec-row'><td colspan='6'>{r[1]}</td></tr>"
         else:
             status_cls = "pass-ok" if "OK" in r[5] or "PASS" in r[5] else "pass-no"
-            # Check for "Load Input" string to apply red color
             val_cls = "load-value" if "Load Input" in str(r[0]) else ""
             table_rows += f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td><td class='{val_cls}'>{r[3]}</td><td>{r[4]}</td><td class='{status_cls}'>{r[5]}</td></tr>"
 
@@ -447,8 +428,25 @@ def generate_column_report(inputs, rows, img_sect, img_pm):
             .footer-section {{ margin-top: 40px; page-break-inside: avoid; }}
             .signature-block {{ width: 300px; text-align: center; }}
             .sign-line {{ border-bottom: 1px solid #000; margin: 40px 0 10px 0; }}
+            /* CSS สำหรับปุ่ม Print ใน HTML Report (ให้เหมือนกับข้างนอก) */
+            .print-btn-internal {{
+                background-color: #4CAF50;
+                border: none;
+                color: white;
+                padding: 12px 24px;
+                text-align: center;
+                text-decoration: none;
+                display: inline-block;
+                font-size: 16px;
+                margin-bottom: 20px;
+                cursor: pointer;
+                border-radius: 5px;
+                font-family: 'Sarabun', sans-serif;
+                font-weight: bold;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            }}
+            .print-btn-internal:hover {{ background-color: #45a049; }}
             @media print {{ .no-print {{ display: none !important; }} body {{ padding: 0; }} }}
-            .print-btn-internal {{ background-color: #4CAF50; color: white; padding: 12px 24px; border: none; border-radius: 5px; cursor: pointer; }}
         </style>
     </head>
     <body>
@@ -540,6 +538,9 @@ with st.sidebar.form("inputs"):
     run_btn = st.form_submit_button("Run Design")
 
 if run_btn:
+    # เพิ่มข้อความ Success Message ที่นี่
+    st.success("✅ คำนวณเสร็จสิ้น (Calculation Finished)")
+
     inputs = {
         'project': project, 'col_id': col_id, 'engineer': engineer,
         'fc': fc, 'fy': fy, 'fyt': fyt,
@@ -554,7 +555,7 @@ if run_btn:
         if found:
             inputs['nx'] = best_nx;
             inputs['ny'] = best_ny
-            st.success(f"✅ Auto-Design Found: Use {2 * best_nx + 2 * max(0, best_ny - 2)}-{mainBar}")
+            st.info(f"💡 Auto-Design Result: Use {2 * best_nx + 2 * max(0, best_ny - 2)}-{mainBar}")
         else:
             st.error("❌ Auto-Design Failed: Section too small or load too high.");
             st.stop()
