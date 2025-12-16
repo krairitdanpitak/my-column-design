@@ -537,14 +537,14 @@ with st.sidebar.form("inputs"):
 
     st.header("1. Material & Geometry")
     c1, c2 = st.columns(2)
-    fc = c1.number_input("fc' (ksc)", 240)
-    fy = c2.number_input("fy (ksc)", 4000)
-    fyt = st.number_input("fyt (Tie) (ksc)", 2400)
+    fc = c1.number_input("fc' (ksc)", value=240, min_value=1)
+    fy = c2.number_input("fy (ksc)", value=4000, min_value=1)
+    fyt = st.number_input("fyt (Tie) (ksc)", value=2400, min_value=1)
 
     c1, c2, c3 = st.columns(3)
-    b = c1.number_input("b (cm)", 25)
-    h = c2.number_input("h (cm)", 25)
-    cover = c3.number_input("Cover (cm)", 3.0)
+    b = c1.number_input("b (cm)", value=25, min_value=10)
+    h = c2.number_input("h (cm)", value=25, min_value=10)
+    cover = c3.number_input("Cover (cm)", value=3.0, min_value=1.0)
 
     st.header("2. Reinforcement")
     design_mode = st.radio("Mode", ["Manual", "Auto-Design"])
@@ -556,14 +556,14 @@ with st.sidebar.form("inputs"):
     if design_mode == "Manual":
         st.write("Number of bars per face:")
         c1, c2 = st.columns(2)
-        nx = c1.number_input("Nx (bars along X)", 2)
-        ny = c2.number_input("Ny (bars along Y)", 2)
+        nx = c1.number_input("Nx (bars along X)", value=2, min_value=2)
+        ny = c2.number_input("Ny (bars along Y)", value=2, min_value=2)
 
     st.header("3. Loads (Factored)")
-    Pu = st.number_input("Axial Load Pu (tf)", 40.0)
-    Mu = st.number_input("Moment Mu (tf-m)", 2.0)
-    # Added Shear Input
-    Vu = st.number_input("Shear Load Vu (tf)", 1.5, min_value=0.0)
+    Pu = st.number_input("Axial Load Pu (tf)", value=40.0, step=0.1)
+    Mu = st.number_input("Moment Mu (tf-m)", value=2.0, step=0.1)
+    # FIX: Added explicit 'value=' keyword to avoid conflict with min_value
+    Vu = st.number_input("Shear Load Vu (tf)", value=1.5, min_value=0.0, step=0.1)
 
     run_btn = st.form_submit_button("Run Design")
 
