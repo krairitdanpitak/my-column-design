@@ -64,7 +64,7 @@ BAR_INFO = {
 }
 
 
-def fmt(n, digits=3):
+def fmt(n, digits=2):
     try:
         val = float(n)
         if math.isnan(val): return "-"
@@ -88,17 +88,15 @@ def calculate_interaction_curve(b, h, cover, main_db, nx, ny, fc, fy):
     d = h - d_prime
 
     Ast = (2 * nx + 2 * max(0, ny - 2)) * (math.pi * (main_db / 2) ** 2)
-    As_face = Ast / 2.0  # Simplify to 2 layers for curve generation
+    As_face = Ast / 2.0
 
     points = []
 
     # Pure Compression Point (Po)
     Ag = b * h
     Po = 0.85 * fc * (Ag - Ast) + fy * Ast
-    Pn_max = 0.80 * Po  # Tied Column
 
-    # Generate points by varying Neutral Axis (c)
-    # Range from pure compression to pure tension vicinity
+    # Generate points
     c_values = np.linspace(1.5 * h, 0.1 * h, 40)
 
     for c in c_values:
@@ -106,25 +104,18 @@ def calculate_interaction_curve(b, h, cover, main_db, nx, ny, fc, fy):
         beta1 = beta1FromFc(fc)
         a = beta1 * c
 
-        # Concrete Force
         Cc = 0.85 * fc * b * min(a, h)
 
-        # Steel Forces
-        # Layer 1 (Compression side)
         eps_s1 = eps_cu * (c - d_prime) / c
-        fs1 = min(fy, 200000 * eps_s1)
-        fs1 = max(-fy, fs1)
+        fs1 = max(-fy, min(fy, 200000 * eps_s1))
         Fs1 = As_face * fs1
 
-        # Layer 2 (Tension side)
         eps_s2 = eps_cu * (c - d) / c
-        fs2 = min(fy, 200000 * eps_s2)
-        fs2 = max(-fy, fs2)
+        fs2 = max(-fy, min(fy, 200000 * eps_s2))
         Fs2 = As_face * fs2
 
         Pn = Cc + Fs1 + Fs2
 
-        # Moment about Plastic Centroid (h/2)
         Mc = Cc * (h / 2 - a / 2)
         Ms1 = Fs1 * (h / 2 - d_prime)
         Ms2 = -Fs2 * (d - h / 2)
@@ -139,31 +130,22 @@ def calculate_interaction_curve(b, h, cover, main_db, nx, ny, fc, fy):
         else:
             phi = 0.65 + (eps_t - 0.002) * (250 / 3)
 
-        # Cap Pn at Pn_max
         phiPn_val = phi * Pn
         limit_top = 0.65 * 0.80 * Po
         if phiPn_val > limit_top: phiPn_val = limit_top
 
         points.append({'P': phiPn_val, 'M': phi * Mn, 'phi': phi})
 
-    # Pure Bending Point (approx)
     points.append({'P': 0, 'M': points[-1]['M']})
-
     return points, Ag, Ast, 0.65 * 0.80 * Po
 
 
 def check_capacity(curve_points, max_load, Pu_target, Mu_target):
-    """ฟังก์ชันตรวจสอบว่า (Mu, Pu) อยู่ในกราฟหรือไม่ (ใช้ Interpolation แบบเดียวกับ Report)"""
-    # 1. Check Axial Limit
     if Pu_target > max_load: return False
-
-    # 2. Find Moment Capacity at Pu level
     m_cap = 0
     found = False
 
-    # Handle Tension/Low compression separately if needed, but for column usually Pu > 0
-    if Pu_target < curve_points[-1]['P']:  # Below pure bending
-        # Conservative: check against last point
+    if Pu_target < curve_points[-1]['P']:
         m_cap = curve_points[-1]['M']
         found = True
     else:
@@ -183,7 +165,7 @@ def check_capacity(curve_points, max_load, Pu_target, Mu_target):
 
 
 def auto_design_reinforcement(inputs):
-    """Loop เพื่อหา Nx, Ny ที่น้อยที่สุดที่รับน้ำหนักได้"""
+    """Loop เพื่อหา Nx, Ny ที่น้อยที่สุด"""
     b = inputs['b'] * 10;
     h = inputs['h'] * 10
     cover = inputs['cover'] * 10
@@ -197,7 +179,6 @@ def auto_design_reinforcement(inputs):
 
     valid_designs = []
 
-    # Loop Nx, Ny from 2 to 8 (can be adjusted)
     for nx in range(2, 9):
         for ny in range(2, 9):
             total_bars = 2 * nx + 2 * max(0, ny - 2)
@@ -205,23 +186,16 @@ def auto_design_reinforcement(inputs):
             Ag = b * h
             rho = Ast / Ag
 
-            # 1. Check Rho (1% - 8%)
             if not (0.01 <= rho <= 0.08): continue
 
-            # 2. Check Capacity
             curve, _, _, p_max = calculate_interaction_curve(b, h, cover, db_main, nx, ny, fc, fy)
             if check_capacity(curve, p_max, Pu_N, Mu_Nmm):
-                valid_designs.append({
-                    'nx': nx, 'ny': ny, 'ast': Ast, 'total': total_bars
-                })
+                valid_designs.append({'nx': nx, 'ny': ny, 'ast': Ast})
 
-    if not valid_designs:
-        return False, 2, 2  # Not found
+    if not valid_designs: return False, 2, 2
 
-    # Sort by Ast area (Economy) then by total bars
     valid_designs.sort(key=lambda x: x['ast'])
     best = valid_designs[0]
-
     return True, best['nx'], best['ny']
 
 
@@ -234,40 +208,40 @@ def process_column_calculation(inputs):
     def row(item, formula, subs, result, unit, status=""):
         rows.append([item, formula, subs, result, unit, status])
 
-    # 1. Inputs & Conversions
+    # Inputs Conversion
     b = inputs['b'] * 10;
     h = inputs['h'] * 10  # mm
     cover = inputs['cover'] * 10
-    fc = inputs['fc'] * 0.0980665  # MPa
-    fy = inputs['fy'] * 0.0980665
-    fyt = inputs['fyt'] * 0.0980665
+    fc_mpa = inputs['fc'] * 0.0980665
+    fy_mpa = inputs['fy'] * 0.0980665
+    fyt_mpa = inputs['fyt'] * 0.0980665
 
-    main_key = inputs['mainBar']
+    main_key = inputs['mainBar'];
     tie_key = inputs['tieBar']
-    nx = int(inputs['nx'])
+    nx = int(inputs['nx']);
     ny = int(inputs['ny'])
-
-    Pu_tf = inputs['Pu']
+    Pu_tf = inputs['Pu'];
     Mu_tfm = inputs['Mu']
 
     # --- 1. MATERIAL & GEOMETRY ---
     sec("1. MATERIAL & SECTION PROPERTIES")
-    row("Concrete & Steel", "fc', fy", f"{fmt(fc, 2)}, {fmt(fy, 0)}", "-", "MPa")
-    row("Section Size", "b x h", f"{fmt(b, 0)} x {fmt(h, 0)}", "-", "mm")
+    row("Concrete Strength", "fc' (Input)", f"{inputs['fc']:.0f} ksc", f"{fmt(fc_mpa, 2)}", "MPa")
+    row("Steel Yield", "fy (Input)", f"{inputs['fy']:.0f} ksc", f"{fmt(fy_mpa, 2)}", "MPa")
+    row("Section Size", "b x h", f"{inputs['b']:.0f} x {inputs['h']:.0f}", f"{fmt(b, 0)}x{fmt(h, 0)}", "mm")
 
-    beta1 = beta1FromFc(fc)
-    row("β1 Factor", "0.85 - 0.05(fc'-28)/7", f"fc'={fmt(fc, 2)}", f"{fmt(beta1, 2)}", "-")
+    beta1 = beta1FromFc(fc_mpa)
+    row("β1 Factor", "0.85 - 0.05(fc'-28)/7", f"0.85 - 0.05({fmt(fc_mpa, 1)}-28)/7", f"{fmt(beta1, 2)}", "-")
 
     Ag = b * h
-    row("Gross Area (Ag)", "b · h", f"{fmt(b, 0)}·{fmt(h, 0)}", f"{fmt(Ag, 0)}", "mm²")
+    row("Gross Area (Ag)", "b · h", f"{fmt(b, 0)} · {fmt(h, 0)}", f"{fmt(Ag, 0)}", "mm²")
 
-    # Rebar Calculation
+    # Rebar
     total_bars = 2 * nx + 2 * max(0, ny - 2)
     bar_area_one = BAR_INFO[main_key]['A_cm2'] * 100
     Ast = total_bars * bar_area_one
 
     row("Main Reinforcement", f"Total {total_bars}-{main_key}",
-        f"{total_bars} x {fmt(bar_area_one, 0)}",
+        f"{total_bars} x {fmt(bar_area_one, 2)}",
         f"{fmt(Ast, 0)}", "mm²")
 
     rho_g = Ast / Ag
@@ -275,29 +249,28 @@ def process_column_calculation(inputs):
     row("Reinforcement Ratio", "ρg = Ast / Ag", f"{fmt(Ast, 0)} / {fmt(Ag, 0)}", f"{fmt(rho_g * 100, 2)}", "%",
         status_rho)
 
-    # --- 2. AXIAL CAPACITY (Compression) ---
+    # --- 2. AXIAL CAPACITY ---
     sec("2. AXIAL LOAD CAPACITY")
 
-    # Po
-    Po_N = 0.85 * fc * (Ag - Ast) + fy * Ast
+    # Po Calculation
+    # Po = 0.85 fc (Ag - Ast) + fy Ast
+    term1 = 0.85 * fc_mpa * (Ag - Ast)
+    term2 = fy_mpa * Ast
+    Po_N = term1 + term2
     Po_tf = Po_N / 9806.65
 
-    row("Nominal Axial (Po)", "0.85fc'(Ag-Ast) + fy·Ast",
-        f"0.85·{fmt(fc, 1)}·({fmt(Ag, 0)}-{fmt(Ast, 0)}) + ...",
-        f"{fmt(Po_tf, 2)}", "tf")
+    # Detailed Substitution for Po
+    sub_po = f"0.85·{fmt(fc_mpa, 1)}·({fmt(Ag, 0)}-{fmt(Ast, 0)}) + {fmt(fy_mpa, 0)}·{fmt(Ast, 0)}"
+    row("Nominal Axial (Po)", "0.85fc'(Ag-Ast) + fy·Ast", sub_po, f"{fmt(Po_tf, 2)}", "tf")
 
     # Phi Pn Max
-    phi_c = 0.65
-    phiPn_max_N = phi_c * 0.80 * Po_N
+    phiPn_max_N = 0.65 * 0.80 * Po_N
     phiPn_max_tf = phiPn_max_N / 9806.65
 
-    row("Max Design Axial", "φPn,max = 0.65·0.80·Po",
-        f"0.52 · {fmt(Po_tf, 2)}",
-        f"{fmt(phiPn_max_tf, 2)}", "tf")
+    sub_pn_max = f"0.65 · 0.80 · {fmt(Po_tf, 2)}"
+    row("Max Design Axial", "φPn,max = 0.52·Po", sub_pn_max, f"{fmt(phiPn_max_tf, 2)}", "tf")
 
-    # Check Axial
-    row("Load Input (Pu)", "-", "-", f"{fmt(Pu_tf, 3)}", "tf", "", )
-
+    row("Load Input (Pu)", "-", "-", f"{fmt(Pu_tf, 3)}", "tf", "")
     status_axial = "PASS" if Pu_tf <= phiPn_max_tf else "FAIL"
     row("Axial Check", "Pu ≤ φPn,max", f"{fmt(Pu_tf, 2)} ≤ {fmt(phiPn_max_tf, 2)}", status_axial, "-", status_axial)
 
@@ -306,8 +279,8 @@ def process_column_calculation(inputs):
     db_main = BAR_INFO[main_key]['d_mm']
     db_tie = BAR_INFO[tie_key]['d_mm']
 
-    s1 = 16 * db_main
-    s2 = 48 * db_tie
+    s1 = 16 * db_main;
+    s2 = 48 * db_tie;
     s3 = min(b, h)
     s_req = min(s1, s2, s3)
 
@@ -322,27 +295,24 @@ def process_column_calculation(inputs):
 
     # --- 4. INTERACTION CHECK ---
     sec("4. MOMENT CAPACITY CHECK")
+    curve_points, _, _, _ = calculate_interaction_curve(b, h, cover, db_main, nx, ny, fc_mpa, fy_mpa)
 
-    curve_points, _, _, _ = calculate_interaction_curve(b, h, cover, db_main, nx, ny, fc, fy)
-
-    # Find M capacity at Pu (Interpolation)
     Pu_N = Pu_tf * 9806.65
     m_cap_Nmm = 0
-
     found = False
+
+    # Interpolation Logic
     for i in range(len(curve_points) - 1):
-        p1 = curve_points[i]['P']
+        p1 = curve_points[i]['P'];
         p2 = curve_points[i + 1]['P']
         if p2 <= Pu_N <= p1:
             ratio = (Pu_N - p2) / (p1 - p2 + 1e-9)
-            m1 = curve_points[i]['M']
+            m1 = curve_points[i]['M'];
             m2 = curve_points[i + 1]['M']
             m_cap_Nmm = m2 + ratio * (m1 - m2)
             found = True
             break
-
     if not found:
-        # Check boundary conditions
         if Pu_N > curve_points[0]['P']:
             m_cap_Nmm = 0
         else:
@@ -351,7 +321,7 @@ def process_column_calculation(inputs):
     m_cap_tfm = m_cap_Nmm / 9806650.0
 
     row("Load Input (Mu)", "-", "-", f"{fmt(Mu_tfm, 3)}", "tf-m", "")
-    row("Moment Capacity", "φMn @ Pu", f"Interpolated from Curve", f"{fmt(m_cap_tfm, 2)}", "tf-m")
+    row("Moment Capacity", "φMn @ Pu", f"Interpolated from P-M Curve", f"{fmt(m_cap_tfm, 2)}", "tf-m")
 
     status_pm = "PASS" if Mu_tfm <= m_cap_tfm else "FAIL"
     row("Interaction Check", "Mu ≤ φMn", f"{fmt(Mu_tfm, 2)} ≤ {fmt(m_cap_tfm, 2)}", status_pm, "-", status_pm)
@@ -389,7 +359,6 @@ def plot_column_section(b, h, cover, main_db, tie_db, nx, ny, tie_s, title="Colu
     end_y = h - margin - main_db / 2
     ys = np.linspace(start_y, end_y, ny) if ny > 1 else [h / 2]
 
-    # Plot Bars
     for x in xs:
         ax.add_patch(patches.Circle((x, end_y), radius=main_db / 2, edgecolor='black', facecolor='#D32F2F'))
         ax.add_patch(patches.Circle((x, start_y), radius=main_db / 2, edgecolor='black', facecolor='#D32F2F'))
