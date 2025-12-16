@@ -148,7 +148,9 @@ def calculate_interaction_curve(b, h, cover, main_db, nx, ny, fc, fy):
         Fs2 = As_face * fs2
 
         Pn = Cc + Fs1 + Fs2
-        Mc = Cc * (h / 2 - a / 2) + Fs1 * (h / 2 - d_prime) - Fs2 * (d - h / 2)
+
+        # --- FIXED HERE: Changed Mc to Mn ---
+        Mn = Cc * (h / 2 - a / 2) + Fs1 * (h / 2 - d_prime) - Fs2 * (d - h / 2)
 
         eps_t = abs(eps_cu * (d - c) / c)
         if eps_t <= 0.002:
@@ -532,7 +534,7 @@ with st.sidebar.form("inputs"):
     st.header("3. Loads (Factored)")
     Pu = st.number_input("Axial Load Pu (tf)", value=40.0, step=0.1)
     Mu = st.number_input("Moment Mu (tf-m)", value=2.0, step=0.1)
-    # Corrected number_input (removed duplicate min_value via value keyword)
+    # Added explicit 'value=' keyword
     Vu = st.number_input("Shear Load Vu (tf)", value=1.5, min_value=0.0, step=0.1)
 
     run_btn = st.form_submit_button("Run Design")
@@ -567,3 +569,6 @@ if run_btn:
 
     html_report = generate_column_report(inputs, rows, img_sect, img_pm)
     st.components.v1.html(html_report, height=1200, scrolling=True)
+
+else:
+    st.info("👈 กรุณากรอกข้อมูลและกด Run Design")
