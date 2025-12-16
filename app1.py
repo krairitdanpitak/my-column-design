@@ -34,6 +34,8 @@ st.markdown("""
     .pass-ok {color: green; font-weight: bold;}
     .pass-no {color: red; font-weight: bold;}
     .sec-row {background-color: #e0e0e0; font-weight: bold; font-size: 15px;}
+
+    /* CSS สำหรับค่า Load ที่เป็น Input ให้เป็นสีแดง */
     .load-value {color: #D32F2F !important; font-weight: bold;}
 </style>
 """, unsafe_allow_html=True)
@@ -115,7 +117,9 @@ def check_column_shear_aci318_19(pu_tf, vu_tf, fc_ksc, fy_tie_ksc, b_cm, h_cm, d
     status = "PASS" if phi_vn >= Vu else "FAIL"
     row("Total Capacity φVn", "φ(Vc + Vs)", f"{phi_vc / 9806.65:.2f} + {phi_vs / 9806.65:.2f}",
         f"{phi_vn / 9806.65:.2f}", "tf", status)
-    row("Shear Demand Vu", "Input Load", "-", f"{vu_tf:.2f}", "tf", status)
+
+    # CHANGED: Use "Load Input (Vu)" to trigger red color CSS
+    row("Load Input (Vu)", "Shear Demand", "-", f"{vu_tf:.2f}", "tf", status)
 
     return rows, status
 
@@ -149,7 +153,7 @@ def calculate_interaction_curve(b, h, cover, main_db, nx, ny, fc, fy):
 
         Pn = Cc + Fs1 + Fs2
 
-        # --- FIXED HERE: Changed Mc to Mn ---
+        # FIXED: Variable name 'Mc' -> 'Mn'
         Mn = Cc * (h / 2 - a / 2) + Fs1 * (h / 2 - d_prime) - Fs2 * (d - h / 2)
 
         eps_t = abs(eps_cu * (d - c) / c)
@@ -209,7 +213,12 @@ def process_column_calculation(inputs):
     sec("2. AXIAL LOAD CAPACITY")
     Po_N = 0.85 * fc_mpa * (Ag - Ast) + fy_mpa * Ast
     phiPn_max_tf = (0.65 * 0.80 * Po_N) / 9806.65
+
+    # ADDED: Explicit load input row to show red color
+    row("Load Input (Pu)", "Factored Load", "-", f"{fmt(Pu_tf, 2)}", "tf", "")
+
     status_axial = "PASS" if Pu_tf <= phiPn_max_tf else "FAIL"
+    row("Axial Capacity", "φPn,max = 0.52·Po", "-", f"{fmt(phiPn_max_tf, 2)}", "tf", "")
     row("Axial Check", "Pu ≤ φPn,max", f"{fmt(Pu_tf, 2)} ≤ {fmt(phiPn_max_tf, 2)}", status_axial, "-", status_axial)
 
     # 3. TIE DESIGN (AUTO SPACING LOGIC)
@@ -233,47 +242,37 @@ def process_column_calculation(inputs):
     Vu_N = Vu_tf * 9806.65
     phi_v = 0.75
 
-    # Vc Calculation
     vc_val = 0.17 * (1 + Nu_N / (14 * Ag)) * math.sqrt(fc_mpa) * b * d
     phi_vc = phi_v * vc_val
 
-    # Determine Required Spacing for Shear
-    s_shear_req = 9999  # Default high value
-    s_shear_max_code = 9999  # Limit by ACI
+    s_shear_req = 9999
+    s_shear_max_code = 9999
 
     if Vu_N > phi_vc:
-        # Need reinforcement
         vs_req = (Vu_N / phi_v) - vc_val
         if vs_req > 0:
-            # s = Av * fyt * d / Vs
             s_shear_req = (tie_area_mm2 * fyt_mpa * d) / vs_req
 
-        # Check max spacing based on Vs intensity
         limit_threshold = 0.33 * math.sqrt(fc_mpa) * b * d
         if vs_req <= limit_threshold:
             s_shear_max_code = min(d / 2, 600)
         else:
             s_shear_max_code = min(d / 4, 300)
-
         check_msg = f"Shear Control (Vs needed)"
     else:
-        # Vc is enough, just need minimum ties
         s_shear_max_code = min(d / 2, 600)
         check_msg = "Min Ties (Vc > Vu/phi)"
 
     # 3.3 Final Selection
     s_final = min(s_geo, s_shear_req, s_shear_max_code)
-
-    # Round down to nearest 10mm (1cm)
     s_prov = math.floor(s_final / 10.0) * 10.0
-    if s_prov < 50: s_prov = 50.0  # Min practical 5cm
+    if s_prov < 50: s_prov = 50.0
 
-    # Show result
     row("Auto-Select Logic", check_msg, f"Min({s_geo:.0f}, {s_shear_req:.0f}, {s_shear_max_code:.0f})", f"{s_prov:.0f}",
         "mm", "AUTO")
     row("Provide Ties", f"Use {tie_key}", f"Round down 1cm", f"@{s_prov / 10:.0f} cm", "-", "OK")
 
-    # 4. SHEAR CAPACITY REPORT (Verify with selected spacing)
+    # 4. SHEAR CAPACITY REPORT
     shear_rows, status_shear = check_column_shear_aci318_19(
         Pu_tf, Vu_tf, inputs['fc'], inputs['fyt'], inputs['b'], inputs['h'], d, tie_area_mm2, s_prov
     )
@@ -283,7 +282,6 @@ def process_column_calculation(inputs):
     sec("5. MOMENT CAPACITY CHECK")
     curve_points, _, _, _ = calculate_interaction_curve(b, h, cover, db_main, nx, ny, fc_mpa, fy_mpa)
 
-    # Check M at Pu
     Pu_N = Pu_tf * 9806.65
     m_cap_Nmm = 0
     if Pu_N <= curve_points[0]['P'] and Pu_N >= curve_points[-1]['P']:
@@ -298,6 +296,10 @@ def process_column_calculation(inputs):
                 break
 
     m_cap_tfm = m_cap_Nmm / 9806650.0
+
+    # ADDED: Explicit load input row to show red color
+    row("Load Input (Mu)", "Factored Moment", "-", f"{fmt(Mu_tfm, 2)}", "tf-m", "")
+
     status_pm = "PASS" if Mu_tfm <= m_cap_tfm else "FAIL"
     row("Interaction Check", "Mu ≤ φMn", f"{fmt(Mu_tfm, 2)} ≤ {fmt(m_cap_tfm, 2)}", status_pm, "-", status_pm)
 
@@ -332,10 +334,8 @@ def auto_design_reinforcement(inputs):
 
             curve, _, _, p_max = calculate_interaction_curve(b, h, cover, db_main, nx, ny, fc, fy)
 
-            # Simple check capacity
             m_cap = 0
-            if Pu_N <= p_max:  # Check if P is within max limit
-                # Interpolate M cap
+            if Pu_N <= p_max:
                 for i in range(len(curve) - 1):
                     p1 = curve[i]['P'];
                     p2 = curve[i + 1]['P']
@@ -417,6 +417,7 @@ def generate_column_report(inputs, rows, img_sect, img_pm):
             table_rows += f"<tr class='sec-row'><td colspan='6'>{r[1]}</td></tr>"
         else:
             status_cls = "pass-ok" if "OK" in r[5] or "PASS" in r[5] else "pass-no"
+            # Check for "Load Input" string to apply red color
             val_cls = "load-value" if "Load Input" in str(r[0]) else ""
             table_rows += f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td><td class='{val_cls}'>{r[3]}</td><td>{r[4]}</td><td class='{status_cls}'>{r[5]}</td></tr>"
 
@@ -534,7 +535,6 @@ with st.sidebar.form("inputs"):
     st.header("3. Loads (Factored)")
     Pu = st.number_input("Axial Load Pu (tf)", value=40.0, step=0.1)
     Mu = st.number_input("Moment Mu (tf-m)", value=2.0, step=0.1)
-    # Added explicit 'value=' keyword
     Vu = st.number_input("Shear Load Vu (tf)", value=1.5, min_value=0.0, step=0.1)
 
     run_btn = st.form_submit_button("Run Design")
