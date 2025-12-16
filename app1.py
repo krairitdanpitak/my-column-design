@@ -19,25 +19,14 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap');
 
-    /* CSS ปุ่มพิมพ์ */
     .print-btn-internal {
-        background-color: #008CBA;
-        border: none;
-        color: white !important;
-        padding: 12px 28px;
-        text-align: center;
-        text-decoration: none;
-        display: inline-block;
-        font-size: 16px;
-        margin: 10px 0px;
-        cursor: pointer;
-        border-radius: 5px;
-        font-family: 'Sarabun', sans-serif;
-        font-weight: bold;
+        background-color: #008CBA; border: none; color: white !important;
+        padding: 12px 28px; text-align: center; text-decoration: none;
+        display: inline-block; font-size: 16px; margin: 10px 0px;
+        cursor: pointer; border-radius: 5px; font-family: 'Sarabun', sans-serif; font-weight: bold;
     }
     .print-btn-internal:hover { background-color: #005f7f; }
 
-    /* CSS ตาราง */
     .report-table {width: 100%; border-collapse: collapse; font-family: 'Sarabun', sans-serif; font-size: 14px;}
     .report-table th, .report-table td {border: 1px solid #ddd; padding: 8px;}
     .report-table th {background-color: #f2f2f2; text-align: center; font-weight: bold;}
@@ -81,75 +70,52 @@ def beta1FromFc(fc_MPa):
 
 
 # ==========================================
-# 3. SHEAR CHECK FUNCTION (NEW)
+# 3. SHEAR CHECK FUNCTION (REPORTING)
 # ==========================================
 def check_column_shear_aci318_19(pu_tf, vu_tf, fc_ksc, fy_tie_ksc, b_cm, h_cm, d_mm, av_mm2, s_mm):
     """
-    ตรวจสอบกำลังรับแรงเฉือนของเสาตาม ACI 318-19
-    คืนค่าเป็น list ของ rows เพื่อนำไปต่อกับตารางหลัก
+    ตรวจสอบและสร้างตารางรายการคำนวณแรงเฉือน (Reporting Only)
     """
     rows = []
 
-    # Helper to add row
-    def row(i, f, sub, r, u, st=""):
-        rows.append([i, f, sub, r, u, st])
+    def row(i, f, sub, r, u, st=""): rows.append([i, f, sub, r, u, st])
 
-    # 1. Conversions
-    Nu = pu_tf * 9806.65  # Ton -> Newton
-    Vu = vu_tf * 9806.65  # Ton -> Newton
-    fc_mpa = fc_ksc * 0.0980665
+    # Conversions
+    Nu = pu_tf * 9806.65;
+    Vu = vu_tf * 9806.65
+    fc_mpa = fc_ksc * 0.0980665;
     fyt_mpa = fy_tie_ksc * 0.0980665
-    bw = b_cm * 10
+    bw = b_cm * 10;
     Ag = bw * (h_cm * 10)
-
-    lambda_val = 1.0
     phi_v = 0.75
 
     rows.append(["SECTION", "4. SHEAR CAPACITY CHECK (ACI 318-19)", "", "", "", ""])
 
-    # 2. Concrete Capacity (Vc)
-    # Vc = 0.17 * (1 + Nu / (14 * Ag)) * lambda * sqrt(fc) * bw * d
+    # Vc
     nu_term = Nu / (14 * Ag)
-    vc_val = 0.17 * (1 + nu_term) * lambda_val * math.sqrt(fc_mpa) * bw * d_mm
+    vc_val = 0.17 * (1 + nu_term) * math.sqrt(fc_mpa) * bw * d_mm
     phi_vc = phi_v * vc_val
-
     sub_vc = f"0.17(1 + {Nu / 1000:.0f}/(14·{Ag / 100:.0f}))√{fc_mpa:.0f}·{bw}·{d_mm:.0f}"
     row("Concrete Vc", "0.17(1 + Nu/14Ag)λ√fc bw d", sub_vc, f"{vc_val / 9806.65:.2f}", "tf", "")
 
-    # 3. Steel Capacity (Vs)
-    # Vs = (Av * fyt * d) / s
+    # Vs
     vs_val = (av_mm2 * fyt_mpa * d_mm) / s_mm
     phi_vs = phi_v * vs_val
-
     sub_vs = f"({av_mm2:.0f} · {fyt_mpa:.0f} · {d_mm:.0f}) / {s_mm:.0f}"
     row("Steel Vs", "Av fyt d / s", sub_vs, f"{vs_val / 9806.65:.2f}", "tf", "")
 
-    # Check Max Vs Limit (ACI 318-19)
+    # Check Max Vs Limit
     vs_max = 0.66 * math.sqrt(fc_mpa) * bw * d_mm
     if vs_val > vs_max:
         row("Vs Max Limit", "0.66√fc bw d", f"Vs {vs_val / 9806.65:.2f} > Max {vs_max / 9806.65:.2f}", "FAIL", "-",
             "FAIL")
 
-    # 4. Total Capacity
+    # Total Capacity
     phi_vn = phi_vc + phi_vs
     status = "PASS" if phi_vn >= Vu else "FAIL"
-
     row("Total Capacity φVn", "φ(Vc + Vs)", f"{phi_vc / 9806.65:.2f} + {phi_vs / 9806.65:.2f}",
         f"{phi_vn / 9806.65:.2f}", "tf", status)
     row("Shear Demand Vu", "Input Load", "-", f"{vu_tf:.2f}", "tf", status)
-
-    # 5. Spacing Check (Shear)
-    limit_threshold = 0.33 * math.sqrt(fc_mpa) * bw * d_mm
-    if vs_val <= limit_threshold:
-        max_s_shear = min(d_mm / 2, 600)
-        cond_text = "Vs ≤ 0.33√fc bw d"
-    else:
-        max_s_shear = min(d_mm / 4, 300)
-        cond_text = "Vs > 0.33√fc bw d"
-
-    status_s = "OK" if s_mm <= max_s_shear else "FAIL"
-    row("Shear Spacing Check", f"Limit ({cond_text})", f"Limit: {max_s_shear:.0f} mm", f"Use: {s_mm:.0f}", "mm",
-        status_s)
 
     return rows, status
 
@@ -158,25 +124,21 @@ def check_column_shear_aci318_19(pu_tf, vu_tf, fc_ksc, fy_tie_ksc, b_cm, h_cm, d
 # 4. CALCULATION LOGIC (MAIN)
 # ==========================================
 def calculate_interaction_curve(b, h, cover, main_db, nx, ny, fc, fy):
-    """สร้างจุดบนกราฟ P-M Interaction Diagram"""
     d_prime = cover + 10 + main_db / 2
     d = h - d_prime
-
     Ast = (2 * nx + 2 * max(0, ny - 2)) * (math.pi * (main_db / 2) ** 2)
     As_face = Ast / 2.0
-
-    points = []
     Ag = b * h
     Po = 0.85 * fc * (Ag - Ast) + fy * Ast
 
+    points = []
     c_values = np.linspace(1.5 * h, 0.1 * h, 40)
-
     for c in c_values:
-        eps_cu = 0.003
         beta1 = beta1FromFc(fc)
         a = beta1 * c
         Cc = 0.85 * fc * b * min(a, h)
 
+        eps_cu = 0.003
         eps_s1 = eps_cu * (c - d_prime) / c
         fs1 = max(-fy, min(fy, 200000 * eps_s1))
         Fs1 = As_face * fs1
@@ -186,10 +148,7 @@ def calculate_interaction_curve(b, h, cover, main_db, nx, ny, fc, fy):
         Fs2 = As_face * fs2
 
         Pn = Cc + Fs1 + Fs2
-        Mc = Cc * (h / 2 - a / 2)
-        Ms1 = Fs1 * (h / 2 - d_prime)
-        Ms2 = -Fs2 * (d - h / 2)
-        Mn = Mc + Ms1 + Ms2
+        Mc = Cc * (h / 2 - a / 2) + Fs1 * (h / 2 - d_prime) - Fs2 * (d - h / 2)
 
         eps_t = abs(eps_cu * (d - c) / c)
         if eps_t <= 0.002:
@@ -199,65 +158,11 @@ def calculate_interaction_curve(b, h, cover, main_db, nx, ny, fc, fy):
         else:
             phi = 0.65 + (eps_t - 0.002) * (250 / 3)
 
-        phiPn_val = phi * Pn
-        limit_top = 0.65 * 0.80 * Po
-        if phiPn_val > limit_top: phiPn_val = limit_top
-
+        phiPn_val = min(phi * Pn, 0.65 * 0.80 * Po)
         points.append({'P': phiPn_val, 'M': phi * Mn, 'phi': phi})
 
     points.append({'P': 0, 'M': points[-1]['M']})
     return points, Ag, Ast, 0.65 * 0.80 * Po
-
-
-def check_capacity(curve_points, max_load, Pu_target, Mu_target):
-    if Pu_target > max_load: return False
-    m_cap = 0
-    found = False
-    if Pu_target < curve_points[-1]['P']:
-        m_cap = curve_points[-1]['M']
-        found = True
-    else:
-        for i in range(len(curve_points) - 1):
-            p1 = curve_points[i]['P']
-            p2 = curve_points[i + 1]['P']
-            if p2 <= Pu_target <= p1:
-                ratio = (Pu_target - p2) / (p1 - p2 + 1e-9)
-                m1 = curve_points[i]['M']
-                m2 = curve_points[i + 1]['M']
-                m_cap = m2 + ratio * (m1 - m2)
-                found = True
-                break
-    if not found: return False
-    return Mu_target <= m_cap
-
-
-def auto_design_reinforcement(inputs):
-    b = inputs['b'] * 10;
-    h = inputs['h'] * 10
-    cover = inputs['cover'] * 10
-    fc = inputs['fc'] * 0.0980665;
-    fy = inputs['fy'] * 0.0980665
-    main_key = inputs['mainBar']
-    db_main = BAR_INFO[main_key]['d_mm']
-    Pu_N = inputs['Pu'] * 9806.65
-    Mu_Nmm = inputs['Mu'] * 9806650.0
-
-    valid_designs = []
-    for nx in range(2, 9):
-        for ny in range(2, 9):
-            total_bars = 2 * nx + 2 * max(0, ny - 2)
-            Ast = total_bars * (math.pi * (db_main / 2) ** 2)
-            Ag = b * h
-            rho = Ast / Ag
-            if not (0.01 <= rho <= 0.08): continue
-
-            curve, _, _, p_max = calculate_interaction_curve(b, h, cover, db_main, nx, ny, fc, fy)
-            if check_capacity(curve, p_max, Pu_N, Mu_Nmm):
-                valid_designs.append({'nx': nx, 'ny': ny, 'ast': Ast})
-
-    if not valid_designs: return False, 2, 2
-    valid_designs.sort(key=lambda x: x['ast'])
-    return True, valid_designs[0]['nx'], valid_designs[0]['ny']
 
 
 def process_column_calculation(inputs):
@@ -269,12 +174,13 @@ def process_column_calculation(inputs):
     def row(item, formula, subs, result, unit, status=""):
         rows.append([item, formula, subs, result, unit, status])
 
-    # Inputs Conversion
+    # Inputs
     b = inputs['b'] * 10;
-    h = inputs['h'] * 10  # mm
+    h = inputs['h'] * 10
     cover = inputs['cover'] * 10
     fc_mpa = inputs['fc'] * 0.0980665
     fy_mpa = inputs['fy'] * 0.0980665
+    fyt_mpa = inputs['fyt'] * 0.0980665
 
     main_key = inputs['mainBar'];
     tie_key = inputs['tieBar']
@@ -284,75 +190,101 @@ def process_column_calculation(inputs):
     Mu_tfm = inputs['Mu'];
     Vu_tf = inputs['Vu']
 
-    # --- 1. MATERIAL & GEOMETRY ---
+    # 1. Geometry
     sec("1. MATERIAL & SECTION PROPERTIES")
-    row("Concrete Strength", "fc' (Input)", f"{inputs['fc']:.0f} ksc", f"{fmt(fc_mpa, 2)}", "MPa")
     row("Section Size", "b x h", f"{inputs['b']:.0f} x {inputs['h']:.0f}", f"{fmt(b, 0)}x{fmt(h, 0)}", "mm")
 
     Ag = b * h
     total_bars = 2 * nx + 2 * max(0, ny - 2)
-    bar_area_one = BAR_INFO[main_key]['A_cm2'] * 100
-    Ast = total_bars * bar_area_one
+    Ast = total_bars * BAR_INFO[main_key]['A_cm2'] * 100
     rho_g = Ast / Ag
 
-    row("Main Reinforcement", f"Total {total_bars}-{main_key}", f"{total_bars} x {fmt(bar_area_one, 2)}",
-        f"{fmt(Ast, 0)}", "mm²")
     status_rho = "OK" if 0.01 <= rho_g <= 0.08 else "FAIL"
     row("Reinforcement Ratio", "ρg = Ast / Ag", f"{fmt(Ast, 0)} / {fmt(Ag, 0)}", f"{fmt(rho_g * 100, 2)}", "%",
         status_rho)
 
-    # --- 2. AXIAL CAPACITY ---
+    # 2. Axial
     sec("2. AXIAL LOAD CAPACITY")
-    term1 = 0.85 * fc_mpa * (Ag - Ast);
-    term2 = fy_mpa * Ast
-    Po_N = term1 + term2
-    phiPn_max_N = 0.65 * 0.80 * Po_N
-    phiPn_max_tf = phiPn_max_N / 9806.65
-
-    row("Max Design Axial", "φPn,max = 0.52·Po", "-", f"{fmt(phiPn_max_tf, 2)}", "tf")
+    Po_N = 0.85 * fc_mpa * (Ag - Ast) + fy_mpa * Ast
+    phiPn_max_tf = (0.65 * 0.80 * Po_N) / 9806.65
     status_axial = "PASS" if Pu_tf <= phiPn_max_tf else "FAIL"
     row("Axial Check", "Pu ≤ φPn,max", f"{fmt(Pu_tf, 2)} ≤ {fmt(phiPn_max_tf, 2)}", status_axial, "-", status_axial)
 
-    # --- 3. TIE DESIGN ---
+    # 3. TIE DESIGN (AUTO SPACING LOGIC)
     sec("3. TIE (STIRRUP) DETAILING")
     db_main = BAR_INFO[main_key]['d_mm']
     db_tie = BAR_INFO[tie_key]['d_mm']
-
-    s1 = 16 * db_main;
-    s2 = 48 * db_tie;
-    s3 = min(b, h)
-    s_req = min(s1, s2, s3)
-
-    row("Spacing Limit 1", "16 · db(main)", f"16 · {db_main}", f"{s1:.0f}", "mm")
-    row("Spacing Limit 3", "Least Dimension", f"min({b},{h})", f"{s3:.0f}", "mm")
-
-    s_prov = math.floor(s_req / 25.0) * 25.0
-    if s_prov < 50: s_prov = 50
-    row("Provide Ties", f"Use {tie_key}", f"min limits", f"@{s_prov / 10:.0f} cm", "-", "OK")
-
-    # --- 4. SHEAR CAPACITY CHECK (NEW) ---
-    # Prepare data for shear check
-    d = h - cover - db_main / 2 - db_tie  # Effective depth
+    d = h - cover - db_main / 2 - db_tie  # Effective depth for shear
     tie_area_mm2 = 2 * BAR_INFO[tie_key]['A_cm2'] * 100  # 2 Legs
 
+    # 3.1 Geometric Limits
+    s_geo_1 = 16 * db_main
+    s_geo_2 = 48 * db_tie
+    s_geo_3 = min(b, h)
+    s_geo = min(s_geo_1, s_geo_2, s_geo_3)
+
+    row("Geo Limit 1", "16 · db(main)", f"16 · {db_main}", f"{s_geo_1:.0f}", "mm")
+    row("Geo Limit 2", "Least Dim", f"min({b},{h})", f"{s_geo_3:.0f}", "mm")
+
+    # 3.2 Shear Requirement Logic
+    Nu_N = Pu_tf * 9806.65
+    Vu_N = Vu_tf * 9806.65
+    phi_v = 0.75
+
+    # Vc Calculation
+    vc_val = 0.17 * (1 + Nu_N / (14 * Ag)) * math.sqrt(fc_mpa) * b * d
+    phi_vc = phi_v * vc_val
+
+    # Determine Required Spacing for Shear
+    s_shear_req = 9999  # Default high value
+    s_shear_max_code = 9999  # Limit by ACI
+
+    if Vu_N > phi_vc:
+        # Need reinforcement
+        vs_req = (Vu_N / phi_v) - vc_val
+        if vs_req > 0:
+            # s = Av * fyt * d / Vs
+            s_shear_req = (tie_area_mm2 * fyt_mpa * d) / vs_req
+
+        # Check max spacing based on Vs intensity
+        limit_threshold = 0.33 * math.sqrt(fc_mpa) * b * d
+        if vs_req <= limit_threshold:
+            s_shear_max_code = min(d / 2, 600)
+        else:
+            s_shear_max_code = min(d / 4, 300)
+
+        check_msg = f"Shear Control (Vs needed)"
+    else:
+        # Vc is enough, just need minimum ties
+        s_shear_max_code = min(d / 2, 600)
+        check_msg = "Min Ties (Vc > Vu/phi)"
+
+    # 3.3 Final Selection
+    s_final = min(s_geo, s_shear_req, s_shear_max_code)
+
+    # Round down to nearest 10mm (1cm)
+    s_prov = math.floor(s_final / 10.0) * 10.0
+    if s_prov < 50: s_prov = 50.0  # Min practical 5cm
+
+    # Show result
+    row("Auto-Select Logic", check_msg, f"Min({s_geo:.0f}, {s_shear_req:.0f}, {s_shear_max_code:.0f})", f"{s_prov:.0f}",
+        "mm", "AUTO")
+    row("Provide Ties", f"Use {tie_key}", f"Round down 1cm", f"@{s_prov / 10:.0f} cm", "-", "OK")
+
+    # 4. SHEAR CAPACITY REPORT (Verify with selected spacing)
     shear_rows, status_shear = check_column_shear_aci318_19(
         Pu_tf, Vu_tf, inputs['fc'], inputs['fyt'], inputs['b'], inputs['h'], d, tie_area_mm2, s_prov
     )
     rows.extend(shear_rows)
 
-    # --- 5. MOMENT CAPACITY CHECK ---
+    # 5. Moment
     sec("5. MOMENT CAPACITY CHECK")
     curve_points, _, _, _ = calculate_interaction_curve(b, h, cover, db_main, nx, ny, fc_mpa, fy_mpa)
-    Pu_N = Pu_tf * 9806.65
-    m_cap_Nmm = 0;
-    found = False
 
-    # Simple search for M capacity at Pu
-    if Pu_N > curve_points[0]['P']:
-        m_cap_Nmm = 0
-    elif Pu_N < curve_points[-1]['P']:
-        m_cap_Nmm = curve_points[-1]['M']
-    else:
+    # Check M at Pu
+    Pu_N = Pu_tf * 9806.65
+    m_cap_Nmm = 0
+    if Pu_N <= curve_points[0]['P'] and Pu_N >= curve_points[-1]['P']:
         for i in range(len(curve_points) - 1):
             p1 = curve_points[i]['P'];
             p2 = curve_points[i + 1]['P']
@@ -361,14 +293,13 @@ def process_column_calculation(inputs):
                 m1 = curve_points[i]['M'];
                 m2 = curve_points[i + 1]['M']
                 m_cap_Nmm = m2 + ratio * (m1 - m2)
-                found = True;
                 break
 
     m_cap_tfm = m_cap_Nmm / 9806650.0
     status_pm = "PASS" if Mu_tfm <= m_cap_tfm else "FAIL"
     row("Interaction Check", "Mu ≤ φMn", f"{fmt(Mu_tfm, 2)} ≤ {fmt(m_cap_tfm, 2)}", status_pm, "-", status_pm)
 
-    # --- FINAL STATUS ---
+    # Final
     sec("6. FINAL STATUS")
     overall = "OK" if (
                 status_rho == "OK" and status_axial == "PASS" and status_shear == "PASS" and status_pm == "PASS") else "NOT OK"
@@ -377,9 +308,50 @@ def process_column_calculation(inputs):
     return rows, curve_points, total_bars, s_prov
 
 
-# ==========================================
-# 5. PLOTTING & REPORT
-# ==========================================
+def auto_design_reinforcement(inputs):
+    # Simplified Auto Design for Main bars only
+    b = inputs['b'] * 10;
+    h = inputs['h'] * 10
+    cover = inputs['cover'] * 10
+    fc = inputs['fc'] * 0.0980665;
+    fy = inputs['fy'] * 0.0980665
+    main_key = inputs['mainBar']
+    db_main = BAR_INFO[main_key]['d_mm']
+    Pu_N = inputs['Pu'] * 9806.65
+    Mu_Nmm = inputs['Mu'] * 9806650.0
+
+    valid_designs = []
+    for nx in range(2, 6):
+        for ny in range(2, 6):
+            total_bars = 2 * nx + 2 * max(0, ny - 2)
+            Ast = total_bars * (math.pi * (db_main / 2) ** 2)
+            rho = Ast / (b * h)
+            if not (0.01 <= rho <= 0.08): continue
+
+            curve, _, _, p_max = calculate_interaction_curve(b, h, cover, db_main, nx, ny, fc, fy)
+
+            # Simple check capacity
+            m_cap = 0
+            if Pu_N <= p_max:  # Check if P is within max limit
+                # Interpolate M cap
+                for i in range(len(curve) - 1):
+                    p1 = curve[i]['P'];
+                    p2 = curve[i + 1]['P']
+                    if p2 <= Pu_N <= p1:
+                        ratio = (Pu_N - p2) / (p1 - p2 + 1e-9)
+                        m1 = curve[i]['M'];
+                        m2 = curve[i + 1]['M']
+                        m_cap = m2 + ratio * (m1 - m2)
+                        break
+
+            if m_cap >= Mu_Nmm:
+                valid_designs.append({'nx': nx, 'ny': ny, 'ast': Ast})
+
+    if not valid_designs: return False, 2, 2
+    valid_designs.sort(key=lambda x: x['ast'])
+    return True, valid_designs[0]['nx'], valid_designs[0]['ny']
+
+
 def fig_to_base64(fig):
     buf = io.BytesIO();
     fig.savefig(buf, format='png', bbox_inches='tight')
@@ -387,7 +359,7 @@ def fig_to_base64(fig):
     return f"data:image/png;base64,{base64.b64encode(buf.read()).decode()}"
 
 
-def plot_column_section(b, h, cover, main_db, tie_db, nx, ny, tie_s, title="Column Section"):
+def plot_column_section(b, h, cover, main_db, tie_db, nx, ny, tie_s):
     fig, ax = plt.subplots(figsize=(4, 4))
     rect = patches.Rectangle((0, 0), b, h, linewidth=2, edgecolor='#333', facecolor='#eee')
     ax.add_patch(rect)
@@ -527,8 +499,6 @@ def generate_column_report(inputs, rows, img_sect, img_pm):
 # ==========================================
 st.title("RC Column Design SDM")
 
-if 'calc_done' not in st.session_state: st.session_state['calc_done'] = False
-
 with st.sidebar.form("inputs"):
     st.header("Project Info")
     project = st.text_input("Project Name", "อาคารสำนักงาน 2 ชั้น")
@@ -562,7 +532,7 @@ with st.sidebar.form("inputs"):
     st.header("3. Loads (Factored)")
     Pu = st.number_input("Axial Load Pu (tf)", value=40.0, step=0.1)
     Mu = st.number_input("Moment Mu (tf-m)", value=2.0, step=0.1)
-    # FIX: Added explicit 'value=' keyword to avoid conflict with min_value
+    # Corrected number_input (removed duplicate min_value via value keyword)
     Vu = st.number_input("Shear Load Vu (tf)", value=1.5, min_value=0.0, step=0.1)
 
     run_btn = st.form_submit_button("Run Design")
@@ -597,6 +567,3 @@ if run_btn:
 
     html_report = generate_column_report(inputs, rows, img_sect, img_pm)
     st.components.v1.html(html_report, height=1200, scrolling=True)
-
-else:
-    st.info("👈 กรุณากรอกข้อมูลและกด Run Design")
